@@ -154,35 +154,37 @@ class TN:
         :return: file path as string type.
         '''
         path_res = path.join(PATH_TO_RESULTS, self.dataname, 'hyperlinks')
-
+        file_path = path.join(path_res, self.dataname + '_hypergraph.dat')
         if not path.exists(path_res):
             os.mkdir(path_res)
+        elif path.exists(file_path):
+            return file_path
 
-        file_path = path.join(path_res, self.dataname + '_hypergraph.dat')
-        if not path.exists(file_path):
-            f = open(file_path, 'w+')  # TODO check if already exists, if so delete it first
-            l = 0
-            ll = 0  #
-            tlast = self.startT
-            n_events = 0
-            while l <= len(self.contacts):
-                # n1, n2, t = tnet.contacts[l]
-                if l == len(self.contacts) or self.contacts[l, 2] != tlast:
-                    print('t-step: ', tlast)
-                    hlinks = [e for e in list(maximal_cliques_BK(self.n, self.contacts[ll:l, :2])) if len(e) >= 2]
-                    # print(type(hlinks[0][0]))
-                    f.write(json.dumps(hlinks) + '\n')
-                    n_events += len(hlinks)
-                    if l < len(self.contacts):
-                        ll = l
-                        tlast = self.contacts[l, 2]
-                    else:
-                        print('Number of events: ', n_events)
-                        break
-                elif self.contacts[l, 2] == tlast:
-                    l += 1
+        # if path.exists(file_path):
+        #     os.remove(file_path)
+        f = open(file_path, 'w+')
+        l = 0
+        ll = 0  #
+        tlast = self.startT
+        n_events = 0
+        while l <= len(self.contacts):
+            # n1, n2, t = tnet.contacts[l]
+            if l == len(self.contacts) or self.contacts[l, 2] != tlast:
+                print('t-step: ', tlast)
+                hlinks = [e for e in list(maximal_cliques_BK(self.n, self.contacts[ll:l, :2])) if len(e) >= 2]
+                # print(type(hlinks[0][0]))
+                f.write(json.dumps(hlinks) + '\n')
+                n_events += len(hlinks)
+                if l < len(self.contacts):
+                    ll = l
+                    tlast = self.contacts[l, 2]
+                else:
+                    print('Number of events: ', n_events)
+                    break
+            elif self.contacts[l, 2] == tlast:
+                l += 1
 
-            f.close()
+        f.close()
 
         return file_path
 
