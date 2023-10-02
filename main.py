@@ -33,7 +33,7 @@ def spread_one_pass(h_tnet: hyperTN, shuffled_r, params, rid=0, model='threshold
     backbones = Counter()
     for node in range(h_tnet.n):
         print('Seeds: ', node)
-        diffusion_tree_links, prev = h_tnet.threshold_model(seedset=frozenset({node}), params=params, T=h_tnet.T)
+        diffusion_tree_links, prev = h_tnet.threshold_model(seedset=frozenset({node}), params=params, infec_func=lambda x: 1, T=h_tnet.T)
         prevalence[:, node] = prev
         backbones.update(diffusion_tree_links)
 
@@ -45,7 +45,7 @@ def spread_one_pass(h_tnet: hyperTN, shuffled_r, params, rid=0, model='threshold
     with open(path.join(res_path, 'backbone{0}{1}.pkl'.format(suffix, f'-s{shuffled_r}' if shuffled_r > 0 else '')), 'wb') as f:
         pickle.dump(backbones, f)
 
-def spread_all_subnets(h_tnet: hyperTN, shuffled_r, params, rid=0, model='threshold_model'):  # TODO: maybe accelarate
+def spread_all_subnets(h_tnet: hyperTN, shuffled_r, params, rid=0, model='threshold_model', infec_func=lambda x: 1):  # TODO: maybe accelarate
     res_path = path.join(PATH_TO_RESULTS, h_tnet.dataname, model,
                          'beta1_{0:.2f}-beta2_{1:.2f}-theta_{2:.1f}'.format(params['beta1'], params['beta2'],
                                                                           params['theta']))
@@ -62,7 +62,7 @@ def spread_all_subnets(h_tnet: hyperTN, shuffled_r, params, rid=0, model='thresh
         prevalence = np.zeros((T, h_tnet.n), dtype=np.float64)
         backbones = Counter()
         for node in range(h_tnet.n):
-            diffusion_tree_links, prev = h_tnet.threshold_model(seedset=frozenset({node}), params=params, T=T)
+            diffusion_tree_links, prev = h_tnet.threshold_model(seedset=frozenset({node}), params=params, infec_func=infec_func, T=T)
             prevalence[:, node] = prev
             backbones.update(diffusion_tree_links)
         if shuffled_r <= 1:

@@ -11,6 +11,7 @@ import seaborn as sns
 from utils import *
 from TNet import TN, PATH_TO_RESULTS
 from hyperTNet import hyperTN
+from centrality import *
 
 MARKERS = ['o', 'v', '^', '>', '<', 's', 'p', 'P', '*', 'h', 'X', 'D']
 COLORS = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'C9']
@@ -107,58 +108,6 @@ def integrate_backbones(dname, num_r=100, theta=1):
                 # return backbone: normalize the weights.
                 with open(path.join(res_path, 'T_0.{0}-backbone.pkl'.format(i + 1)), 'wb') as f:
                     pickle.dump(backbone, f)
-
-def sublink_weights_order3(h_tnet: hyperTN, i=0) -> dict:
-    '''
-    Calculate the metric of the 3rd order link based on its weight w_j and the weights of its sub-links as w_j*(w1+w2+w3)
-    :param h_tnet: temporal hypergraph
-    :param i: the sub-net index
-    :return:
-    '''
-    from itertools import combinations
-    with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 't_division.json'), 'r') as f:
-        ts = json.loads(f.read().rstrip('\n'))
-    agg_hyperlinks = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[i]])
-    hlinks_order3_metric = dict().fromkeys([k for k in agg_hyperlinks if len(k) == 3], 0)
-    for hlink in hlinks_order3_metric:
-        for hl in combinations(hlink, 2):
-            hl = frozenset(hl)
-            if hl in agg_hyperlinks:
-                hlinks_order3_metric[hlink] += agg_hyperlinks[hlink] * agg_hyperlinks[hl]
-
-    return hlinks_order3_metric
-
-def effective_weights_order3(h_tnet: hyperTN, i=0) -> dict:
-    '''
-    Calculate the effective weight product of the 3rd order link based on its weight w_j and the weights of its sub-links
-    :param h_tnet: temporal hypergraph
-    :param i: the sub-net index
-    :return:
-    '''
-    with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 't_division.json'), 'r') as f:
-        ts = json.loads(f.read().rstrip('\n'))
-    agg_hyperlinks = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[i]])
-    hlinks_order3_metric = dict().fromkeys([k for k in agg_hyperlinks if len(k) == 3], 0)
-    hlinks_order3_count_tmp = dict().fromkeys([k for k in agg_hyperlinks if len(k) == 3], 0)
-    hlinks_order3_count = dict().fromkeys([k for k in agg_hyperlinks if len(k) == 3], 0)
-    hlinks_order3_subsetcount = dict().fromkeys([k for k in agg_hyperlinks if len(k) == 3], 0)
-    for hlinks in h_tnet.hypercontacts[:ts[i]]:
-        for hlink in hlinks:
-            if len(hlink) == 2:
-                for hlink3 in hlinks_order3_metric:
-                    if hlink.issubset(hlink3):
-                        hlinks_order3_subsetcount[hlink3] += 1
-            elif len(hlink) == 3:
-                hlinks_order3_count_tmp[hlink] += 1
-        for hlink3 in hlinks_order3_metric:
-            if hlinks_order3_count_tmp[hlink3] == 0:
-                hlinks_order3_metric[hlink3] += (agg_hyperlinks[hlink3] - hlinks_order3_count[hlink3]) * hlinks_order3_subsetcount[hlink3]
-            else:
-                hlinks_order3_count[hlink3] += hlinks_order3_count_tmp[hlink3]
-                hlinks_order3_count_tmp[hlink3] = 0
-            hlinks_order3_subsetcount[hlink3] = 0
-
-    return hlinks_order3_metric
 
 
 # beta1 == 1, compare
@@ -593,14 +542,18 @@ def compare_backbone_diff_t_heatmap(h_tnet: hyperTN, top_n, theta=1):  # TODO: h
                           'top_links_diff_t_heatmap_theta_{0:.1f}.pdf'.format(theta)), dpi=180)
 
 
-def scatter_weights_topo_props(h_tnet: hyperTN, its, order=2):
+def scatter_weights_topo_props(h_tnet: hyperTN, its, metric='weights', order=2):
+    global hlinks_order3_metric
     beta = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
     n_realizations = 1000
     with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 't_division.json'), 'r') as f:
         ts = json.loads(f.read().rstrip('\n'))
 
     substrate = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[its]])
-    hlinks_order3_metric = effective_weights_order3(h_tnet, i=its)
+    if metric == 'weights':
+        hlinks_order3_metric = effective_weights_order3(h_tnet, inverse=False, i=its)
+    elif metric == 'inverse weights':
+        hlinks_order3_metric = effective_weights_order3(h_tnet, inverse=True, i=its)
     links_timestamps = dict().fromkeys(substrate)
     for k in substrate:
         links_timestamps[k] = []
@@ -642,7 +595,61 @@ def scatter_weights_topo_props(h_tnet: hyperTN, its, order=2):
         ax[1][i].set_yscale('log')
     fig.tight_layout()
     fig.savefig(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
-                          'weights_topo_props_order_{0}_effectiveweights.pdf'.format(order)), dpi=200)
+                          'weights_topo_props_order_{0}_effectiveweights_inverse.pdf'.format(order)), dpi=200)
+
+def scatter_weights_topo_props_order2(h_tnet: hyperTN, alpha, its):
+    beta = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    n_realizations = 1000
+    with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 't_division.json'), 'r') as f:
+        ts = json.loads(f.read().rstrip('\n'))
+
+    substrate = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[its]])
+    # hlinks_order2_metric = two_hop_score_order2(h_tnet, i=its)
+    hlinks_order2_metric = two_hop_score_order2(h_tnet, i=its)
+    for k in hlinks_order2_metric:
+        hlinks_order2_metric[k] = substrate[k] + alpha * hlinks_order2_metric[k]
+
+    links_timestamps = dict().fromkeys(substrate)
+    for k in substrate:
+        links_timestamps[k] = []
+    for t, hlinks in enumerate(h_tnet.hypercontacts[:ts[its]]):
+        for hlink in hlinks:
+            links_timestamps[hlink].append(t)
+
+    fig, ax = plt.subplots(2, len(beta), figsize=(2.2 * len(beta), 2.2 * 2))
+    for i, bt in enumerate(beta):
+        with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
+                            'beta1_{0:.2f}-beta2_{1:.2f}-theta_{2:.1f}'.format(bt, bt, 1),
+                            'T_0.{0}-backbone.pkl'.format(its + 1)), 'rb') as f:
+            backbone1 = pickle.load(f)
+        with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
+                            'beta1_{0:.2f}-beta2_{1:.2f}-theta_{2:.1f}'.format(bt, bt, -1),
+                            'T_0.{0}-backbone.pkl'.format(its + 1)), 'rb') as f:
+            backbone2 = pickle.load(f)
+        backbone1 = {k: v / n_realizations for k, v in backbone1.items()}
+        backbone2 = {k: v / n_realizations for k, v in backbone2.items()}
+        data1 = [(np.sum(links_timestamps[k]), backbone1[k], substrate[k], hlinks_order2_metric[k]) for k in backbone1
+                 if len(k) == 2]
+        ax[0][i].scatter([e[2] for e in data1], [e[1] for e in data1], c=[np.log(e[2]) for e in data1], cmap='viridis',
+                         alpha=0.5)
+        r = pearsonr([e[2] for e in data1], [e[1] for e in data1])[0]
+        tau = kendalltau([e[2] for e in data1], [e[1] for e in data1])[0]
+        ax[0][i].set_title('r={0:.3f}, tau={1:.3f}'.format(r, tau), pad=0.1)
+
+        data2 = [(np.sum(links_timestamps[k]), backbone2[k], substrate[k], hlinks_order2_metric[k]) for k in backbone2
+                 if len(k) == 2]
+        ax[1][i].scatter([e[3] for e in data2], [e[1] for e in data2], c=[np.log(e[2]) for e in data2], cmap='viridis',
+                         alpha=0.5)
+        r = pearsonr([e[3] for e in data2], [e[1] for e in data2])[0]
+        tau = kendalltau([e[3] for e in data2], [e[1] for e in data2])[0]
+        ax[1][i].set_title('r={0:.3f}, tau={1:.3f}'.format(r, tau), pad=0.1)
+        ax[0][i].set_xscale('log')
+        ax[0][i].set_yscale('log')
+        ax[1][i].set_xscale('log')
+        ax[1][i].set_yscale('log')
+    fig.tight_layout()
+    fig.savefig(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
+                          'weights_topo_props_order_2_one-two_hop_walks_alpha_{0:.2f}.pdf'.format(alpha)), dpi=200)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Contation process on temporal higher-order networks')
@@ -655,7 +662,7 @@ if __name__ == '__main__':
     parser.add_argument('--array_id', type=int, default=1, help='ID of job arrays in slurm')
     args = parser.parse_args()
     h_tnet = hyperTN(args.dataset)
-    groupsize_statistics(h_tnet)
+    # groupsize_statistics(h_tnet)
     # plot_prevalence(h_tnet, {'beta1': 1.0, 'beta2': 1.0, 'theta':1})
     # average_shuffled_outputs(args.dataset, args.beta, num_r=100, num_s=10, theta=args.theta)
     # integrate_backbones(args.dataset, num_r=1000, theta=args.theta)
@@ -667,4 +674,6 @@ if __name__ == '__main__':
     # distance_weights4subnets(theta=args.theta)
     # scatter_weights_diff_thresholds(h_tnet, theta=args.theta, order=4, normalization=False, ranking=False)
     # compare_backbone_diff_t_heatmap(h_tnet, top_n=1000, theta=args.theta)
-    # scatter_weights_topo_props(h_tnet, 0, order=3)
+    # scatter_weights_topo_props(h_tnet, 0, metric='inverse weights', order=3)
+    for alpha in [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]:
+        scatter_weights_topo_props_order2(h_tnet, alpha=alpha, its=0)

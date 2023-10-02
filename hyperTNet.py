@@ -58,7 +58,7 @@ class hyperTN:
         '''
         Aggregate temporal hypergraph along time axis.
         :param hypercontacts: each element is a list of hypercontacts occured at a specific timestamp.
-        :return: list of hyperedges of the resultant aggregated hypergraph
+        :return: A Counter object with key being hlink and count being the link weight.
         '''
         hcontacts = list(map(lambda l: [frozenset(s) for s in l], hcontacts))
         cnt = Counter()
@@ -206,7 +206,7 @@ class hyperTN:
 
         return diffusion_links, n_infected
 
-    def threshold_model(self, seedset: frozenset, params: dict, T):
+    def threshold_model(self, seedset: frozenset, params: dict, infec_func, T):
         '''
         The threshold model on temporal hyper graphs. Adapted from ref. Social contagion models on hypergraphs. Guilherme et al. Phys. Rev. Res., 2(2):023032, 2020
         For a hyper-contact with size 2, the directed infection occurs between the susceptible node and its infectious neighbor, beta1
@@ -238,7 +238,7 @@ class hyperTN:
                     for node in hlink:
                         if node in infected_nodes:
                             continue
-                        elif np.random.uniform() <= beta:
+                        elif np.random.uniform() <= beta * infec_func(len(hlink)):  # TODO normalization
                             if node not in new_infected_hlinks:
                                 new_infected_t.add(node)
                                 new_infected_hlinks[node] = []
