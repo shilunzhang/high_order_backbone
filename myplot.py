@@ -597,7 +597,7 @@ def scatter_weights_topo_props(h_tnet: hyperTN, its, metric='weights', order=2):
     fig.savefig(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
                           'weights_topo_props_order_{0}_effectiveweights_inverse.pdf'.format(order)), dpi=200)
 
-def scatter_weights_topo_props_order2(h_tnet: hyperTN, alpha, its):
+def scatter_weights_topo_props_order2(h_tnet: hyperTN, alpha, phi, its):
     beta = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
     n_realizations = 1000
     with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 't_division.json'), 'r') as f:
@@ -605,9 +605,18 @@ def scatter_weights_topo_props_order2(h_tnet: hyperTN, alpha, its):
 
     substrate = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[its]])
     # hlinks_order2_metric = two_hop_score_order2(h_tnet, i=its)
-    hlinks_order2_metric = two_hop_score_order2(h_tnet, i=its)
+    hlinks_order2_2hop_metric = two_hop_score_order2(h_tnet, i=its)
+    with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
+                        'beta1_{0:.2f}-beta2_{1:.2f}-theta_{2:.1f}'.format(1.0, 1.0, 1),
+                        'T_0.{0}-backbone.pkl'.format(its + 1)), 'rb') as f:
+        backbone_beta1 = pickle.load(f)
+    hlinks_order2_metric = dict.fromkeys([k for k in substrate if len(k) == 2], 0)
+    for k in backbone_beta1:
+        if len(k) == 2:
+            hlinks_order2_metric[k] = backbone_beta1[k] / n_realizations
     for k in hlinks_order2_metric:
-        hlinks_order2_metric[k] = substrate[k] + alpha * hlinks_order2_metric[k]
+        hlinks_order2_metric[k] = substrate[k] + alpha * hlinks_order2_2hop_metric[k] + phi * hlinks_order2_metric[k]
+
 
     links_timestamps = dict().fromkeys(substrate)
     for k in substrate:
@@ -649,7 +658,9 @@ def scatter_weights_topo_props_order2(h_tnet: hyperTN, alpha, its):
         ax[1][i].set_yscale('log')
     fig.tight_layout()
     fig.savefig(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
-                          'weights_topo_props_order_2_one-two_hop_walks_alpha_{0:.2f}.pdf'.format(alpha)), dpi=200)
+                          'weights_topo_props_order_2_combined_alpha_{0:.2f}_phi_{1:.2f}.pdf'.format(alpha, phi)), dpi=200)
+    # fig.savefig(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
+    #                       'weights_topo_props_order_2_one-two_hop_walks_alpha_{0:.2f}.pdf'.format(alpha)), dpi=200)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Contation process on temporal higher-order networks')
@@ -675,5 +686,6 @@ if __name__ == '__main__':
     # scatter_weights_diff_thresholds(h_tnet, theta=args.theta, order=4, normalization=False, ranking=False)
     # compare_backbone_diff_t_heatmap(h_tnet, top_n=1000, theta=args.theta)
     # scatter_weights_topo_props(h_tnet, 0, metric='inverse weights', order=3)
-    for alpha in [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]:
-        scatter_weights_topo_props_order2(h_tnet, alpha=alpha, its=0)
+    # for alpha in [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]:
+    #     scatter_weights_topo_props_order2(h_tnet, alpha=alpha, its=0)
+    scatter_weights_topo_props_order2(h_tnet, alpha=0.0, phi=1.0, its=0)
