@@ -66,7 +66,7 @@ def spread_all_subnets(h_tnet: hyperTN, shuffled_r, params, rid=0, model='thresh
             prevalence[:, node] = prev
             backbones.update(diffusion_tree_links)
         if shuffled_r <= 1:
-            np.savetxt(path.join(res_path, 'T_0.{0}-prevalence2d{1}.txt'.format(i+1, suffix)), prevalence, fmt='%6.1f', delimiter='\t')
+            np.savetxt(path.join(res_path, 'T_0.{0}-prevalence2d{1}.txt'.format(i+1, suffix)), prevalence.mean(axis=1), fmt='%6.1f', delimiter='\t')
         with open(path.join(res_path, 'T_0.{0}-backbone{1}{2}.pkl'.format(i+1, suffix, f'-s{shuffled_r}' if shuffled_r > 0 else '')), 'wb') as f:
             pickle.dump(backbones, f)
 

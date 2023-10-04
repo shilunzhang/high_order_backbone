@@ -1,7 +1,5 @@
 from copy import copy
-
 import numpy as np
-
 from hyperTNet import *
 
 
@@ -58,66 +56,9 @@ def effective_weights_order3(h_tnet: hyperTN, inverse=False, i=0) -> dict:
     return hlinks_order3_metric
 
 
-def local_effective_weights_(h_tnet: hyperTN, i=0) -> dict:
+def local_ascending_path_metric(h_tnet: hyperTN, i=0) -> dict:
     '''
-    calculate the effective weights for arbitrary order hyperlinks
-    :param h_tnet:
-    :param i:
-    :return: a dictionary containing the effective weights for all hyperlinks
-    '''
-    import queue
-    with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 't_division.json'), 'r') as f:
-        ts = json.loads(f.read().rstrip('\n'))
-    agg_hyperlinks = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[i]])
-    hlinks_order2_weights_t = dict().fromkeys([k for k in agg_hyperlinks if len(k) == 2],
-                                              0)  # pairwise link weight at time t
-    hlinks_metric = dict().fromkeys([k for k in agg_hyperlinks], 0)
-
-    hlinks_superset = dict().fromkeys([k for k in agg_hyperlinks])
-    hlinks_subset = dict().fromkeys([k for k in agg_hyperlinks if len(k) > 2])
-    hlinks_higher_order_timestamp = dict().fromkeys([k for k in agg_hyperlinks if len(k) > 2])
-    for k in agg_hyperlinks:
-        hlinks_superset[k] = []
-        if len(k) > 2:
-            hlinks_subset[k] = []
-        else:
-            continue
-        hlinks_higher_order_timestamp[k] = []
-
-    for hlink in agg_hyperlinks:  # construct a superset and subset.
-        for hlink_higher_order in hlinks_higher_order_timestamp:
-            if len(hlink) + 1 == len(hlink_higher_order):
-                remaining_nodes = hlink_higher_order - hlink
-                if len(remaining_nodes) == 1:
-                    hlinks_superset[hlink].append(list(remaining_nodes)[0])
-                    hlinks_subset[hlink_higher_order].append(list(remaining_nodes)[0])
-
-    for t, hlinks in enumerate(h_tnet.hypercontacts[:ts[i]]):  # record the timestamps of higher-order links
-        for hlink in hlinks:
-            if len(hlink) > 2:
-                continue
-            hlinks_higher_order_timestamp[hlink].append(t)
-
-    q = queue.Queue()
-    for t, hlinks in enumerate(h_tnet.hypercontacts[:ts[i]]):  # for each pairwise link, calculate score along the tree
-        for hlink in hlinks:
-            if len(hlink) == 2:
-                q.put(hlink)
-                while not q.empty():
-                    hlink_current = q.get()
-                    for node in hlinks_superset[hlink_current]:
-                        hlink_next = hlink_current.union({node})
-                        q.put(hlink_next)
-                        # update hlink_next's score
-
-            hlinks_order2_weights_t[hlink] += 1
-
-    return hlinks_metric
-
-
-def local_effective_weights(h_tnet: hyperTN, i=0) -> dict:
-    '''
-    calculate the effective weights for arbitrary order hyperlinks using a tree structure
+    calculate the ascending-order path metric for arbitrary order hyperlinks using a tree structure
     :param h_tnet:
     :param i:
     :return: a dictionary containing the effective weights for all hyperlinks
@@ -187,6 +128,75 @@ def local_effective_weights(h_tnet: hyperTN, i=0) -> dict:
 
     return metrics
 
+def local_effective_sum_metric(h_tnet: hyperTN, i=0) -> dict:
+    '''
+    Calculate the local effective metric
+    :param h_tnet:
+    :param i:
+    :return:
+    '''
+    with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 't_division.json'), 'r') as f:
+        ts = json.loads(f.read().rstrip('\n'))
+    agg_hyperlinks = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[i]])
+    metrics = dict().fromkeys([k for k in agg_hyperlinks], 0)
+
+    hlinks_order2_superset = dict().fromkeys([k for k in agg_hyperlinks if len(k) == 2])  # for each link, record hyperlinks containing the link itself.
+    for k in hlinks_order2_superset:
+        hlinks_order2_superset[k] = []
+
+    for hlink in hlinks_order2_superset:  # construct the superset.
+        for hlink_ho in agg_hyperlinks:
+            if len(hlink_ho) > 2 and hlink_ho.issuperset(hlink):
+                hlinks_order2_superset[hlink].append(hlink_ho)
+
+    hlink_weight_t = dict().fromkeys([k for k in agg_hyperlinks if len(k) > 2], 0)
+
+    for hlinks in h_tnet.hypercontacts[:ts[i]]:
+        for hlink in hlinks:
+            if len(hlink) > 2:
+                hlink_weight_t[hlink] += 1
+            else:
+                metrics[hlink] += 1
+        for hlink in hlinks:
+            if len(hlink) == 2:
+                for superset in hlinks_order2_superset[hlink]:
+                    metrics[superset] += agg_hyperlinks[superset] - hlink_weight_t[superset]
+
+    return metrics
+
+def local_effective_prod_metric(h_tnet: hyperTN, i=0) -> dict:
+    '''
+    Calculate the local effective metric
+    :param h_tnet:
+    :param i:
+    :return:
+    '''
+    with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 't_division.json'), 'r') as f:
+        ts = json.loads(f.read().rstrip('\n'))
+    agg_hyperlinks = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[i]])
+    metrics = dict().fromkeys([k for k in agg_hyperlinks], 0)
+
+    hlinks_order2_superset = dict().fromkeys([k for k in agg_hyperlinks if len(k) == 2])  # for each link, record hyperlinks containing the link itself.
+    for k in hlinks_order2_superset:
+        hlinks_order2_superset[k] = []
+
+    hlink_weight_t = dict().fromkeys([k for k in agg_hyperlinks if len(k) == 2], 0)
+
+    for hlinks in h_tnet.hypercontacts[:ts[i]]:
+        for hlink in hlinks:
+            if len(hlink) > 2:
+                for snode in hlink:
+                    for rnode in hlink:
+                        if rnode != snode:
+                            metrics[hlink] += np.prod([hlink_weight_t[frozenset([snode, tnode])] if tnode != snode and tnode != rnode and frozenset([snode, tnode]) in hlink_weight_t else 0 for tnode in hlink])
+
+        for hlink in hlinks:
+            if len(hlink) == 2:
+                hlink_weight_t[hlink] += 1
+            else:
+                metrics[hlink] += 1
+
+    return metrics
 
 def two_hop_score_order2(h_tnet: hyperTN, i=0) -> dict:
     '''
