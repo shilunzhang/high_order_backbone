@@ -236,6 +236,7 @@ def maximal_cliques_BK(N, links):
 if __name__ == '__main__':
     gname = 'primaryschool'
     tnet = TN(gname, resolution=1)
+    tnet.pairwise2hyperlink()
     # aggregate_hyperTN(tnet.pairwise2hyperlink())
     import networkx as nx
     import matplotlib.pyplot as plt

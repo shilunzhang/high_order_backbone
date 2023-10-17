@@ -24,7 +24,7 @@ class hyperTN:
             self.n = tnet.n
         else:
             self.hypercontacts = self.hypercontacts_from_txt(path.join(PATH_TO_RESULTS, self.dataname, 'hyperlinks', self.dataname + '_hypergraph.dat'))
-            minid, maxid = 1e5, 0
+            minid, maxid = 1e8, 0
             for contacts in self.hypercontacts:
                 for contact in contacts:
                     minid_contact, maxid_contact = min(contact), max(contact)
@@ -43,6 +43,7 @@ class hyperTN:
         print(f'---- Temporal hypergraph information ----\n'
               f'Name: {self.dataname}\n#nodes: {self.n}\t#events: {n_events}\ttime span: [0, {self.T}]\n'
               f'-------------------------------------')
+
     def hypercontacts_from_txt(self, fpath: str) -> list:
         hyperlinks = []
         with open(fpath, 'r') as f:
@@ -66,6 +67,36 @@ class hyperTN:
             cnt.update(hedges)
 
         return cnt
+
+    def time_division(self, which='all'):
+        '''
+        the division into subnets according to the prevalence
+        :return:
+        '''
+        with open(path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model', 't_division.json'), 'r') as f:
+            ts = json.loads(f.read().rstrip('\n'))
+
+        if which == 'all':
+            return ts
+        elif which == 'largest':
+            return len(ts) - 1, ts[-1]
+        else:
+            print('which mode?')
+
+    def return_backbone(self, params:dict, model='hyper', subnet=0):
+        import pickle
+        n_realizations = 1000 if self.datatype == 'phy-contact' else 100
+        if model == 'hyper':
+            pkl_path = path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model',
+                      'beta1_{0:.2f}-beta2_{1:.2f}-theta_{2:.1f}'.format(params['beta'], params['beta'], params['theta']),
+                      'T_0.{0}-backbone.pkl'.format(subnet+1))
+            with open(pkl_path, 'rb') as f:
+                backbone = pickle.load(f)
+            backbone = {k: v / n_realizations for k, v in backbone.items()}
+        else:
+            print('NULL')
+
+        return backbone
 
     def shuffle_order_within_snapshot(self, seed=0, r=10) -> str:
         path_res = path.join(PATH_TO_RESULTS, self.dataname)

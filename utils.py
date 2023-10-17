@@ -39,7 +39,6 @@ def overlap_top_N(seq1, seq2, top_n) -> float:  # TODO
 
     return np.mean(overlap)
 
-
 def counter_total(ct: Counter) -> int:
     sum = 0
     for k in ct:

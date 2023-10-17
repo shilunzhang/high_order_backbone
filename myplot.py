@@ -1,3 +1,4 @@
+import os.path
 import pickle
 from os import path
 import json
@@ -44,70 +45,64 @@ def groupsize_statistics(h_tnet: hyperTN, plot=True):
     return gs, freq
 
 
-def plot_prevalence(h_tnet: hyperTN, params):
-    res_path = path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
-                         'beta1_{0:.2f}-beta2_{1:.2f}-theta_{2:.1f}'.format(params['beta1'], params['beta2'],
-                                                                            params['theta']))
-    prevalence = np.hstack(
-        (np.load(path.join(res_path, 'prevalence2d-r{0}.npy'.format(i))).mean(axis=1).reshape(-1, 1) for i in
-         range(1, 101)))
-    fig, ax = plt.subplots(1, 1, figsize=(5, 3.5))
-    line_shaded(range(prevalence.shape[0]), np.mean(prevalence, axis=1), y_diff=np.std(prevalence, axis=1), ax=ax,
-                line_params={'c': 'g', 'alpha': 0.5})
-    # line_shaded(range(prevalence2.shape[0]), np.mean(prevalence2, axis=1), y_diff=np.std(prevalence2, axis=1), ax=ax,
-    #             line_params={'c': 'r', 'alpha': 0.5, 'label': r'$\Theta=2$'})
-    # line_shaded(range(prevalence3.shape[0]), np.mean(prevalence3, axis=1), y_diff=np.std(prevalence3, axis=1), ax=ax,
-    #             line_params={'c': 'b', 'alpha': 0.5, 'label': r'$\Theta=3$'})
-    # plt.ylim([0, 1])
-    ax.set_xlabel('T')
-    ax.set_ylabel(r'$\rho$')
-    ax.set_title(h_tnet.dataname)
+def plot_prevalence(h_tnet: hyperTN):
+    beta = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 't_division.json'), 'r') as f:
+        ts = json.loads(f.read().rstrip('\n'))
+    res_path = path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model')
+    fig, ax = plt.subplots(1, len(beta), figsize=(2.2 * len(beta), 2.2))
+    for i, bt in enumerate(beta):
+        prevalence1 = np.load(path.join(res_path, 'beta1_{0:.2f}-beta2_{0:.2f}-theta_{1:.1f}'.format(bt, 1), 'T_0.{0}-prevalence_averaged.npy'.format(len(ts))))
+        prevalence2 = np.load(path.join(res_path, 'beta1_{0:.2f}-beta2_{0:.2f}-theta_{1:.1f}'.format(bt, -1), 'T_0.{0}-prevalence_averaged.npy'.format(len(ts))))
+        ax[i].plot(range(len(prevalence1)), prevalence1/h_tnet.n, c='black', clip_on=False, alpha=0.6)
+        ax[i].plot(range(len(prevalence2)), prevalence2/h_tnet.n, c='maroon', clip_on=False, alpha=0.6)
+        ax[i].plot([len(prevalence1)-1], [prevalence1[-1]/h_tnet.n], 'o', c='k', markersize=6, markeredgewidth=0, alpha=0.6, clip_on=False, label=r'${0:.2f}/{1:d}$'.format(prevalence1[-1], h_tnet.n))
+        ax[i].plot([len(prevalence2)-1], [prevalence2[-1]/h_tnet.n], 'o', c='maroon', markersize=6, markeredgewidth=0, alpha=0.6, clip_on=False, label=r'${0:.2f}/{1:d}$'.format(prevalence2[-1], h_tnet.n))
+        ax[i].xaxis.set_tick_params(bottom=False)
+        ax[i].yaxis.set_ticks([0.1 * t for t in range(len(ts)+1)])
+        ax[i].yaxis.set_tick_params(direction='in')
+        ax[i].legend(frameon=False)
+        # ax[i].set_yscale('log')
+        ax[i].set_ylim([0, 0.1 * len(ts)])
+    ax[0].set_xlabel('')
+    ax[0].set_ylabel(r'prevalence')
     # ax.legend(frameon=False)
     fig.tight_layout()
-    fig.savefig(path.join('results', h_tnet.dataname, 'threshold_model', 'prevalence.pdf'), dpi=180)
-    plt.show()
+    fig.savefig(path.join(res_path, 'prevalence_evolution.pdf'), dpi=200)
+    # plt.show()
 
 
-def average_shuffled_outputs(dname, beta, num_r=100, num_s=10, theta=1):
-    with open(path.join(PATH_TO_RESULTS, dname, 'threshold_model', 't_division.json'), 'r') as f:
-        ts = json.loads(f.read().rstrip('\n'))
-
-    for i, t in enumerate(ts):
-        res_path = path.join(PATH_TO_RESULTS, dname, 'threshold_model',
-                             'beta1_{0:.2f}-beta2_{0:.2f}-theta_{1:.1f}'.format(beta, theta))
-        for r in range(1, num_r + 1):
-            suffix = f'-r{r}' if beta < 1.0 else ''
-            backbone = Counter()
-            for s in range(1, num_s + 1):
-                with open(path.join(res_path, 'T_0.{0}-backbone{1}-s{2}.pkl'.format(i + 1, suffix, s)), 'rb') as f:
-                    bb = pickle.load(f)
-                    backbone.update(bb)
-            with open(path.join(res_path, 'T_0.{0}-backbone{1}.pkl'.format(i + 1, suffix)), 'wb') as f:
-                pickle.dump(backbone, f)
-            if beta == 1.0:
-                break
-
-
-def integrate_backbones(dname, num_r=100, theta=1):
-    with open(path.join(PATH_TO_RESULTS, dname, 'threshold_model', 't_division.json'), 'r') as f:
+def integrate_backbones(h_tnet: hyperTN, beta, theta=1, num_r=100):
+    if h_tnet.datatype == 'phy-contact':
+        num_r = 1000
+    with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 't_division.json'), 'r') as f:
         ts = json.loads(f.read().rstrip('\n'))
     for i, t in enumerate(ts):
-        for beta1 in [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]:
+        for beta1 in [beta]:
             print(i, beta1)
             for beta2 in [1.0]:
-                res_path = path.join(PATH_TO_RESULTS, dname, 'threshold_model',
+                res_path = path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
                                      'beta1_{0:.2f}-beta2_{1:.2f}-theta_{2:.1f}'.format(beta1, beta1, theta))
                 # if path.exists(path.join(res_path, 'T_0.{0}-backbone.pkl'.format(i + 1))):
                 #     print('Existed..')
                 #     continue
                 backbone = Counter()
+                prevalence = np.zeros((t, num_r), dtype=float)
+                if os.path.exists(path.join(res_path, 'T_0.{0}-prevalence_averaged.npy'.format(i + 1))):
+                    continue
                 for r in range(1, num_r + 1):
-                    with open(path.join(res_path, 'T_0.{0}-backbone-r{1}.pkl'.format(i + 1, r)), 'rb') as f:
-                        bb = pickle.load(f)
-                        backbone.update(bb)
+                    print(r)
+                    # with open(path.join(res_path, 'T_0.{0}-backbone-r{1}.pkl'.format(i + 1, r)), 'rb') as f:
+                    #     bb = pickle.load(f)
+                    #     backbone.update(bb)
+                    prevalence[:, r - 1] = np.loadtxt(
+                        path.join(res_path, 'T_0.{0}-prevalence2d-r{1}.txt'.format(i + 1, r)), dtype=float).mean(
+                        axis=1)
                 # return backbone: normalize the weights.
-                with open(path.join(res_path, 'T_0.{0}-backbone.pkl'.format(i + 1)), 'wb') as f:
-                    pickle.dump(backbone, f)
+                prevalence_average = prevalence.mean(axis=1)
+                # with open(path.join(res_path, 'T_0.{0}-backbone.pkl'.format(i + 1)), 'wb') as f:
+                #     pickle.dump(backbone, f)
+                np.save(path.join(res_path, 'T_0.{0}-prevalence_averaged.npy'.format(i + 1)), prevalence_average)
 
 
 # beta1 == 1, compare
@@ -597,24 +592,19 @@ def scatter_weights_topo_props(h_tnet: hyperTN, its, metric='weights', order=2):
     fig.savefig(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
                           'weights_topo_props_order_{0}_effectiveweights_inverse.pdf'.format(order)), dpi=200)
 
-def scatter_weights_topo_props_order2(h_tnet: hyperTN, theta, phi, its, n_realizations=100):
+def scatter_weights_topo_props_order2(h_tnet: hyperTN, theta, phi):
     beta = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-    if h_tnet.datatype == 'phy-contact':
-        n_realizations = 1000
-    with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 't_division.json'), 'r') as f:
-        ts = json.loads(f.read().rstrip('\n'))
+    ts = h_tnet.time_division(which='all')
+    its = len(ts) - 1
 
     substrate = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[its]])
-    hlinks_order2_1hop_metric = local_effective_sum_metric(h_tnet, i=its)
-    hlinks_order2_2hop_metric = two_hop_score_order2(h_tnet, i=its)
-    with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
-                        'beta1_{0:.2f}-beta2_{1:.2f}-theta_{2:.1f}'.format(1.0, 1.0, 1),
-                        'T_0.{0}-backbone.pkl'.format(its + 1)), 'rb') as f:
-        backbone_beta1 = pickle.load(f)
+    # hlinks_order2_2hop_metric = two_hop_score_order2(h_tnet, i=its)
+
+    backbone_beta1 = h_tnet.return_backbone({'beta': 1.0, 'theta': 1}, subnet=its)
     hlinks_order2_metric = dict.fromkeys([k for k in substrate if len(k) == 2], 0)
     for k in backbone_beta1:
         if len(k) == 2:
-            hlinks_order2_metric[k] = backbone_beta1[k] / n_realizations
+            hlinks_order2_metric[k] = backbone_beta1[k]
 
     links_timestamps = dict().fromkeys(substrate)
     for k in substrate:
@@ -625,14 +615,13 @@ def scatter_weights_topo_props_order2(h_tnet: hyperTN, theta, phi, its, n_realiz
 
     fig, ax = plt.subplots(2, len(beta), figsize=(2.2 * len(beta), 2.2 * 2))
     for i, bt in enumerate(beta):
-        with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
-                            'beta1_{0:.2f}-beta2_{1:.2f}-theta_{2:.1f}'.format(bt, bt, theta),
-                            'T_0.{0}-backbone.pkl'.format(its + 1)), 'rb') as f:
-            backbone = pickle.load(f)
-        backbone = {k: v / n_realizations for k, v in backbone.items()}
-        # backbone2 = {k: v / n_realizations for k, v in backbone2.items()}
+        print(i, bt)
+        backbone = h_tnet.return_backbone({'beta': bt, 'theta': theta}, subnet=its)
+        hlinks_order2_2hop_metric = local_effective_superset_metric(h_tnet, i=its, order=2, beta=bt)
+
         for k in hlinks_order2_metric:
-            hlinks_order2_metric[k] = hlinks_order2_1hop_metric[k] + bt * hlinks_order2_2hop_metric[k] + phi * hlinks_order2_metric[k]
+            # hlinks_order2_metric[k] = substrate[k] + bt * hlinks_order2_2hop_metric[k] / 2 + phi * hlinks_order2_metric[k]
+            hlinks_order2_metric[k] = substrate[k] + hlinks_order2_2hop_metric[k] + phi * hlinks_order2_metric[k]
         data1 = [(np.sum(links_timestamps[k]), backbone[k], substrate[k], hlinks_order2_metric[k]) for k in backbone
                  if len(k) == 2]
         ax[0][i].scatter([e[2] for e in data1], [e[1] for e in data1], c=[np.log(e[2]) for e in data1], cmap='viridis',
@@ -654,23 +643,24 @@ def scatter_weights_topo_props_order2(h_tnet: hyperTN, theta, phi, its, n_realiz
         ax[1][i].set_yscale('log')
     fig.tight_layout()
     fig.savefig(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
-                          'weights_topo_props_order_2_theta{0}_onetwo_hop_weight.pdf'.format(theta)), dpi=200)
+                          'weights_topo_props_order_2_theta{0}_superset_weight_.pdf'.format(theta)), dpi=200)
     # fig.savefig(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
     #                       'weights_topo_props_order_2_one-two_hop_walks_alpha_{0:.2f}.pdf'.format(alpha)), dpi=200)
 
-def scatter_weights_topo_props_diff_order(h_tnet: hyperTN, theta, its, n_realizations=100):
-    if h_tnet.datatype == 'phy-contact':
-        n_realizations = 1000
+def scatter_weights_topo_props_diff_order(h_tnet: hyperTN, theta):
     beta = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-    with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 't_division.json'), 'r') as f:
-        ts = json.loads(f.read().rstrip('\n'))
+    ts = h_tnet.time_division(which='all')
+    its = len(ts) - 1
 
     substrate = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[its]])
-    max_order = max([len(k) for k in substrate])
-    print('Max order ', max_order)
-    max_order = min([10, max_order])
-    # metrics = local_effective_sum_metric(h_tnet, i=its)
-    metrics = local_effective_prod_metric(h_tnet, i=its)
+    max_order = min([max([len(k) for k in substrate]), 4])
+    # metrics = substrate
+    # local_eff_metrics = local_effective_sum_metric(h_tnet)
+    local_eff_inverse_metrics = local_effective_sum_inverse_metric(h_tnet)
+    twohop_metrics = two_hop_walk_score(h_tnet)
+    # metrics = local_effective_prod_metric(h_tnet, i=its)
+    # metrics = local_cross_order_weight(h_tnet, i=its, supsub='superset')
+    # metrics = local_cross_order_effective_weight(h_tnet, i=its, supsub='superset')
 
     links_timestamps = dict().fromkeys(substrate)
     for k in substrate:
@@ -679,24 +669,20 @@ def scatter_weights_topo_props_diff_order(h_tnet: hyperTN, theta, its, n_realiza
         for hlink in hlinks:
             links_timestamps[hlink].append(t)
 
-    fig, ax = plt.subplots(max_order, len(beta), figsize=(2.2 * len(beta), 2.2 * (max_order)))
+    fig, ax = plt.subplots(max_order-1, len(beta), figsize=(2.2 * len(beta), 2.2 * (max_order-1)))
     for i, bt in enumerate(beta):
-        with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
-                            'beta1_{0:.2f}-beta2_{1:.2f}-theta_{2:.1f}'.format(bt, bt, theta),
-                            'T_0.{0}-backbone.pkl'.format(its + 1)), 'rb') as f:
-            backbone = pickle.load(f)
-        backbone = {k: v / n_realizations for k, v in backbone.items()}
+        # metrics = {k: substrate[k] + bt * twohop_metrics[k] for k in substrate}
+        # metrics = {k: substrate[k] + bt * local_eff_metrics[k] for k in substrate}
+        # metrics = {k: substrate[k] + bt * (local_eff_metrics[k] + twohop_metrics[k]) for k in substrate}
+        metrics = local_eff_inverse_metrics
+        backbone = h_tnet.return_backbone({'beta': bt, 'theta': theta}, subnet=its)
         for order in range(2, max_order+1):
             data = [(np.sum(links_timestamps[k]), backbone[k], substrate[k], metrics[k]) for k in backbone if len(k) == order]
             print('Order ', order, ' #datapoints: ', len(data))
             if len(data) < 5:
                 continue
-            if theta == 1:
-                ax[order - 2][i].scatter([e[2] for e in data], [e[1] for e in data], c=[np.log(e[2]) for e in data],
-                                         cmap='viridis', alpha=0.5)
-            else:
-                ax[order - 2][i].scatter([e[3] for e in data], [e[1] for e in data], c=[np.log(e[2]) for e in data],
-                                         cmap='viridis', alpha=0.5)
+            ax[order - 2][i].scatter([e[3] for e in data], [e[1] for e in data], c=[np.log(e[2]) for e in data],
+                                     cmap='viridis', alpha=0.5)
             r = pearsonr([e[3] for e in data], [e[1] for e in data])[0]
             tau = kendalltau([e[3] for e in data], [e[1] for e in data])[0]
             ax[order-2][i].set_title('r={0:.3f}, tau={1:.3f}'.format(r, tau), pad=0.1)
@@ -704,7 +690,182 @@ def scatter_weights_topo_props_diff_order(h_tnet: hyperTN, theta, its, n_realiza
             ax[order-2][i].set_yscale('log')
     fig.tight_layout()
     fig.savefig(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
-                          'weights_topo_props_diff_order_prod_linkweight_theta_{0}.pdf'.format(theta)), dpi=200)
+                          'weights_topo_props_diff_order_local_eff_plus1_inverse_only_theta_{0}_subnet{1}.pdf'.format(theta, its)), dpi=200)
+    # fig.savefig(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
+    #                       'weights_topo_props_diff_order_linkweight_theta_{0}_subnet{1}.pdf.pdf'.format(theta, its)), dpi=200)
+
+def number_of_links_activated(h_tnet: hyperTN, weighted=False):
+    fig, ax = plt.subplots(1, 1, figsize=(4, 4))
+    beta = [0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    y_theta1, y_theta2 = np.zeros((len(beta), 2), dtype=float), np.zeros((len(beta), 2), dtype=float)
+    for i, bt in enumerate(beta):
+        backbone1 = h_tnet.return_backbone({'beta': bt, 'theta': 1}, subnet=h_tnet.time_division(which='largest')[0])
+        backbone2 = h_tnet.return_backbone({'beta': bt, 'theta': -1}, subnet=h_tnet.time_division(which='largest')[0])
+        if not weighted:
+            y_theta1[i, 0] = len([1 for k in backbone1 if len(k) == 2])
+            y_theta1[i, 1] = len([1 for k in backbone1 if len(k) == 3])
+            y_theta2[i, 0] = len([1 for k in backbone2 if len(k) == 2])
+            y_theta2[i, 1] = len([1 for k in backbone2 if len(k) == 3])
+        else:
+            y_theta1[i, 0] = np.sum([backbone1[k] for k in backbone1 if len(k) == 2]) / (h_tnet.n**2)
+            y_theta1[i, 1] = np.sum([backbone1[k] for k in backbone1 if len(k) == 3]) / (h_tnet.n**2)
+            y_theta2[i, 0] = np.sum([backbone2[k] for k in backbone2 if len(k) == 2]) / (h_tnet.n**2)
+            y_theta2[i, 1] = np.sum([backbone2[k] for k in backbone2 if len(k) == 3]) / (h_tnet.n**2)
+    ax.plot(beta, y_theta1[:, 0], marker=MARKERS[0], markersize=6, c=COLORS[0])
+    ax.plot(beta, y_theta1[:, 1], marker=MARKERS[1], markersize=6, c=COLORS[1])
+    ax.plot(beta, y_theta2[:, 0], '--', marker=MARKERS[0], markersize=6, c=COLORS[0])
+    ax.plot(beta, y_theta2[:, 1], '--', marker=MARKERS[1], markersize=6, c=COLORS[1])
+    ax.set_yscale('log')
+    ax.set_ylabel('percentage of links' if not weighted else '$\sum_j w_j^B/N^2$')
+    ax.set_xlabel(r'$\beta$')
+    ax.set_xlim([0, 1.05])
+    ax.set_title(h_tnet.dataname)
+    fig.tight_layout()
+    fig.savefig(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
+                          'percentage_links_activated_beta.pdf' if not weighted else 'weight_link_beta.pdf'), dpi=200)
+
+def ratio_of_links_activated(h_tnet: hyperTN):
+    its, ts = h_tnet.time_division(which='largest')
+    aggregated = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts])
+    fig, ax = plt.subplots(1, 1, figsize=(4, 4))
+    beta = [0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    y_theta1, y_theta2 = np.zeros((len(beta), 2), dtype=float), np.zeros((len(beta), 2), dtype=float)
+    for i, bt in enumerate(beta):
+        backbone1 = h_tnet.return_backbone({'beta': bt, 'theta': 1}, subnet=its)
+        backbone2 = h_tnet.return_backbone({'beta': bt, 'theta': -1}, subnet=its)
+        y_theta1[i, 0] = len([1 for k in backbone1 if len(k) == 2]) / len([1 for k in aggregated if len(k) == 2])
+        y_theta1[i, 1] = len([1 for k in backbone1 if len(k) == 3]) / len([1 for k in aggregated if len(k) == 3])
+        y_theta2[i, 0] = len([1 for k in backbone2 if len(k) == 2]) / len([1 for k in aggregated if len(k) == 2])
+        y_theta2[i, 1] = len([1 for k in backbone2 if len(k) == 3]) / len([1 for k in aggregated if len(k) == 3])
+    ax.plot(beta, y_theta1[:, 0], marker=MARKERS[0], markersize=6, c=COLORS[0])
+    ax.plot(beta, y_theta1[:, 1], marker=MARKERS[1], markersize=6, c=COLORS[1])
+    ax.plot(beta, y_theta2[:, 0], '--', marker=MARKERS[0], markersize=6, c=COLORS[0])
+    ax.plot(beta, y_theta2[:, 1], '--', marker=MARKERS[1], markersize=6, c=COLORS[1])
+    # ax.set_yscale('log')
+    ax.set_ylabel('percentage of links')
+    ax.set_xlabel(r'$\beta$')
+    ax.set_xlim([0, 1.05])
+    ax.set_title(h_tnet.dataname)
+    fig.tight_layout()
+    fig.savefig(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
+                          'percentage_links_activated_beta.pdf'), dpi=200)
+
+def check_low_weight(h_tnet: hyperTN, beta):
+    ts = h_tnet.time_division(which='all')
+    its = len(ts) - 1
+    aggregated = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[its]])
+    backbone = h_tnet.return_backbone({'beta': beta, 'theta': 1}, subnet=its)
+
+    hlinks_order2 = dict().fromkeys([k for k in aggregated if len(k) == 2 and aggregated[k] == 1], 0)
+    hlinks_order2_ts = dict().fromkeys([k for k in aggregated if len(k) == 2 and aggregated[k] == 1])
+    hlinks_order2_adjcent = dict().fromkeys([k for k in aggregated if len(k) == 2 and aggregated[k] == 1], 0)
+    for t, hlinks in enumerate(h_tnet.hypercontacts[:ts[its]]):
+        for hlink in hlinks:
+            if len(hlink) == 2:
+                hlinks_order2_ts[hlink] = t+1
+        for hlink in hlinks:
+            if len(hlink) > 2:
+                for hl in hlinks_order2_ts:
+                    if hlink.issuperset(hl) and hlinks_order2_ts[hl] is None:
+                        hlinks_order2[hl] += len(hlink)
+                    if len(hlink.intersection(hl)) >= 1 and hlinks_order2_ts[hl] is None:
+                        hlinks_order2_adjcent[hl] += len(hlink)
+
+    data = [(aggregated[k], backbone[k] if k in backbone else 0, hlinks_order2_adjcent[k]) for k in hlinks_order2]
+    fig, ax = plt.subplots(1, 1, figsize=(4, 3.5))
+    ax.scatter([e[0] for e in data], [e[2]+1 for e in data], c=[np.log2(e[1]+1) for e in data],
+                                     cmap='viridis', alpha=0.5)
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    # ax.set_xlim(xmin=1)
+    ax.set_xlabel('$w^B_j$')
+    ax.set_ylabel('superset size')
+    fig.tight_layout()
+    fig.savefig(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
+                          'check_2d.pdf'), dpi=200)
+
+def check_2d(h_tnet: hyperTN):
+    beta = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    ts = h_tnet.time_division(which='all')
+    its = len(ts) - 1
+    aggregated = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[its]])
+    hlinks_order2 = dict().fromkeys([k for k in aggregated if len(k) == 2], 0)
+
+    fig, ax = plt.subplots(1, len(beta), figsize=(2.2 * len(beta), 2.2))
+    for b, bt in enumerate(beta):
+        backbone = h_tnet.return_backbone({'beta': bt, 'theta': 1}, subnet=its)
+
+        hlinks_order2_metric = local_effective_superset_metric(h_tnet, i=its, order=2, beta=bt)
+
+        data = [(aggregated[k], backbone[k] if k in backbone else 0, hlinks_order2_metric[k]) for k in hlinks_order2]
+        ax[b].scatter([e[0] for e in data], [e[2] + 1 for e in data], c=[np.log2(e[1] + 1) for e in data],
+                   cmap='viridis', alpha=0.5)
+        ax[b].set_xscale('log')
+        ax[b].set_yscale('log')
+        ax[b].set_xlabel('$w_j$')
+    ax[0].set_ylabel('superset size')
+    fig.tight_layout()
+    fig.savefig(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
+                          'check_2d_superset.pdf'), dpi=200)
+
+def corr_coef_backbone_metric(h_tnet: hyperTN, params: dict, subnet: int, order: int, metric: str, corr_metric: str):
+    global metric_dict
+    if metric == 'linkweight':
+        metric_dict = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:h_tnet.time_division(which='all')[subnet]])
+    else:
+        with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'centrality', 'T_0.{0}-{1}.pkl'.format(subnet+1, metric)), 'rb') as f:
+            metric_dict = pickle.load(f)
+    # elif metric == 'local_effective_sum_metric':
+    #     metric_dict = local_effective_sum_metric(h_tnet, subnet=subnet)
+    # elif metric == 'local_effective_sum_inverse_metric':
+    #     metric_dict = local_effective_sum_inverse_metric(h_tnet, subnet=subnet)
+    # elif metric == 'two_hop_walk_score':
+    #     metric_dict = two_hop_walk_score(h_tnet, subnet=subnet)
+
+    metric_dict = {k:v for k,v in metric_dict.items() if len(k) == order}
+    backbone = h_tnet.return_backbone(params, subnet=subnet)
+    data = [(backbone[k], metric_dict[k]) if k in backbone else (0, metric_dict[k]) for k in metric_dict]
+
+    if corr_metric == 'kendalltau':
+        return kendalltau([e[0] for e in data], [e[1] for e in data])[0]
+    elif corr_metric == 'pearsonr':
+        return pearsonr([e[0] for e in data], [e[1] for e in data])[0]
+
+
+def compare_diff_metrics(order=3, theta=-1, corr_metric='kendalltau'):
+    dataset_phy_contacts = ['infectious', 'primaryschool', 'highschool2013', 'ht09']
+    dataset_sci_collab = ['q-bio', 'q-fin', 'hep-lat', 'nucl-th']
+    metrics = ['linkweight', 'local_effective_sum_metric', 'local_effective_sum_inverse_metric', 'two_hop_walk_score']
+    beta = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+
+    fig, ax = plt.subplots(2, 4, figsize=(len(dataset_phy_contacts) * 3.2, 2 * 2.5))
+    plt.subplots_adjust(left=0.06, right=0.89, bottom=0.11, top=0.97)
+    for idx in range(ax.shape[1]):
+        h_tnet1 = hyperTN(dataset_phy_contacts[idx])
+        ts1 = h_tnet1.time_division(which='all')
+        corr_coef1 = []
+        for bt in beta:
+            corr_coef1.append([corr_coef_backbone_metric(h_tnet1, {'beta': bt, 'theta': theta}, subnet=len(ts1)-1, order=order, metric=metric, corr_metric=corr_metric) for metric in metrics])
+        for m in range(len(metrics)):
+            ax[0][idx].plot(beta, [e[m] for e in corr_coef1], '-', marker=MARKERS[m], c=COLORS[m], label=metrics[m])
+        h_tnet2 = hyperTN(dataset_sci_collab[idx])
+        ts2 = h_tnet2.time_division(which='all')
+        corr_coef2 = []
+        for bt in beta:
+            corr_coef2.append([corr_coef_backbone_metric(h_tnet2, {'beta': bt, 'theta': theta}, subnet=len(ts2) - 1,
+                                order=order, metric=metric, corr_metric=corr_metric) for metric in metrics])
+        for m in range(len(metrics)):
+            ax[1][idx].plot(beta, [e[m] for e in corr_coef2], '-', marker=MARKERS[m], c=COLORS[m], label=metrics[m])
+        ax[1][idx].set_xlabel(r'$\beta$')
+        plt.text(.97, .97, dataset_phy_contacts[idx], ha='right', va='top', transform=ax[0][idx].transAxes, fontsize='large', fontweight='bold')
+        plt.text(.97, .97, dataset_sci_collab[idx], ha='right', va='top', transform=ax[1][idx].transAxes, fontsize='large', fontweight='bold')
+    ax[0][0].set_ylabel('Kendall tau')
+    ax[1][0].set_ylabel('Kendall tau')
+    handles, labels = ax[-1][-1].get_legend_handles_labels()
+    fig.legend(handles, ['$w_j$', r'$w_j^{eff}$', r'$w_j^{inv-eff}$', r'$\epsilon_j$'], ncol=1, loc=(0.92, 0.42))
+    # fig.tight_layout()
+    fig.savefig(path.join(PATH_TO_FIGS, 'Metrics_evaluation_order{0}_{1}.pdf'.format(order, corr_metric)), dpi=200)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Contation process on temporal higher-order networks')
@@ -716,11 +877,11 @@ if __name__ == '__main__':
     parser.add_argument('--n_arrays', type=int, default=10, help='the number of job arrays in slurm')
     parser.add_argument('--array_id', type=int, default=1, help='ID of job arrays in slurm')
     args = parser.parse_args()
-    h_tnet = hyperTN(args.dataset)
+    # h_tnet = hyperTN(args.dataset)
     # groupsize_statistics(h_tnet)
-    # plot_prevalence(h_tnet, {'beta1': 1.0, 'beta2': 1.0, 'theta':1})
+    # plot_prevalence(h_tnet)
     # average_shuffled_outputs(args.dataset, args.beta, num_r=100, num_s=10, theta=args.theta)
-    # integrate_backbones(args.dataset, num_r=100, theta=args.theta)
+    # integrate_backbones(h_tnet, beta=args.beta, theta=args.theta, num_r=100)
     # backbone_vs_substrate(h_tnet)
     # all_datasets_backbone_vs_substrate(['infectious', 'ht09', 'highschool2013', 'primaryschool'], 1)
     # plot_backbone_comparison(h_tnet, order=4, theta=args.theta)  # the recall or weight distance as a function of beta
@@ -732,5 +893,10 @@ if __name__ == '__main__':
     # scatter_weights_topo_props(h_tnet, 0, metric='inverse weights', order=3)
     # for alpha in [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]:
     #     scatter_weights_topo_props_order2(h_tnet, alpha=alpha, phi=0, its=0)
-    # scatter_weights_topo_props_order2(h_tnet, theta=args.theta, phi=0.0, its=0)
-    # scatter_weights_topo_props_diff_order(h_tnet, theta=args.theta, its=0)
+    # scatter_weights_topo_props_order2(h_tnet, theta=args.theta, phi=0.0)
+    # scatter_weights_topo_props_diff_order(h_tnet, theta=args.theta)
+    # number_of_links_activated(h_tnet, weighted=True)
+    # ratio_of_links_activated(h_tnet)
+    # check_low_weight(h_tnet, args.beta)
+    # check_2d(h_tnet)
+    compare_diff_metrics()

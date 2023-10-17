@@ -1,5 +1,7 @@
+import os.path
 from copy import copy
 import numpy as np
+import argparse
 from hyperTNet import *
 
 
@@ -128,35 +130,33 @@ def local_ascending_path_metric(h_tnet: hyperTN, i=0) -> dict:
 
     return metrics
 
-def local_effective_sum_metric(h_tnet: hyperTN, i=0) -> dict:
-    '''
-    Calculate the local effective metric
+def local_effective_sum_metric(h_tnet: hyperTN, subnet) -> dict:
+    ''' return the local effective metric (sum of weights of pairwise links) of all higher-order links
     :param h_tnet:
-    :param i:
     :return:
     '''
-    with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 't_division.json'), 'r') as f:
-        ts = json.loads(f.read().rstrip('\n'))
-    agg_hyperlinks = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[i]])
+    ts = h_tnet.time_division(which='all')
+    agg_hyperlinks = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[subnet]])
     metrics = dict().fromkeys([k for k in agg_hyperlinks], 0)
 
-    hlinks_order2_superset = dict().fromkeys([k for k in agg_hyperlinks if len(k) == 2])  # for each link, record hyperlinks containing the link itself.
+    hlinks_order2_superset = dict().fromkeys(
+        [k for k in agg_hyperlinks if len(k) == 2])  # for each link, record hyperlinks containing the link itself.
     for k in hlinks_order2_superset:
         hlinks_order2_superset[k] = []
 
-    for hlink in hlinks_order2_superset:  # construct the superset.
+    for hlink in hlinks_order2_superset:  # construct the superset of pairwise links.
         for hlink_ho in agg_hyperlinks:
             if len(hlink_ho) > 2 and hlink_ho.issuperset(hlink):
                 hlinks_order2_superset[hlink].append(hlink_ho)
 
     hlink_weight_t = dict().fromkeys([k for k in agg_hyperlinks if len(k) > 2], 0)
 
-    for hlinks in h_tnet.hypercontacts[:ts[i]]:
+    for hlinks in h_tnet.hypercontacts[:ts[subnet]]:
         for hlink in hlinks:
             if len(hlink) > 2:
                 hlink_weight_t[hlink] += 1
-            else:
-                metrics[hlink] += 1
+            # else:
+            #     metrics[hlink] += 1
         for hlink in hlinks:
             if len(hlink) == 2:
                 for superset in hlinks_order2_superset[hlink]:
@@ -164,90 +164,159 @@ def local_effective_sum_metric(h_tnet: hyperTN, i=0) -> dict:
 
     return metrics
 
-def local_effective_prod_metric(h_tnet: hyperTN, i=0) -> dict:
-    '''
-    Calculate the local effective metric
+def local_effective_sum_inverse_metric(h_tnet: hyperTN, subnet) -> dict:
+    ''' return the local effective metric (inverse of sum of weights of pairwise links) of all higher-order links
     :param h_tnet:
-    :param i:
     :return:
     '''
-    with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 't_division.json'), 'r') as f:
-        ts = json.loads(f.read().rstrip('\n'))
-    agg_hyperlinks = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[i]])
+    from itertools import combinations
+    ts = h_tnet.time_division(which='all')
+    agg_hyperlinks = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[subnet]])
     metrics = dict().fromkeys([k for k in agg_hyperlinks], 0)
 
-    hlinks_order2_superset = dict().fromkeys([k for k in agg_hyperlinks if len(k) == 2])  # for each link, record hyperlinks containing the link itself.
-    for k in hlinks_order2_superset:
-        hlinks_order2_superset[k] = []
+    hlink_order2_weight_t = dict().fromkeys([k for k in agg_hyperlinks if len(k) == 2], 0)
 
-    hlink_weight_t = dict().fromkeys([k for k in agg_hyperlinks if len(k) == 2], 0)
-
-    for hlinks in h_tnet.hypercontacts[:ts[i]]:
+    for hlinks in h_tnet.hypercontacts[:ts[subnet]]:
         for hlink in hlinks:
             if len(hlink) > 2:
-                for snode in hlink:
-                    for rnode in hlink:
-                        if rnode != snode:
-                            metrics[hlink] += np.prod([hlink_weight_t[frozenset([snode, tnode])] if tnode != snode and tnode != rnode and frozenset([snode, tnode]) in hlink_weight_t else 0 for tnode in hlink])
+                link_weights_sum = 0
+                for link_tuple in combinations(hlink, 2):
+                    link_pairwise = frozenset(link_tuple)
+                    if link_pairwise in hlink_order2_weight_t:
+                        link_weights_sum += hlink_order2_weight_t[link_pairwise]
+                # if link_weights_sum > 0:
+                metrics[hlink] += 1/(link_weights_sum+1)
 
         for hlink in hlinks:
             if len(hlink) == 2:
-                hlink_weight_t[hlink] += 1
-            else:
-                metrics[hlink] += 1
+                hlink_order2_weight_t[hlink] += 1
 
     return metrics
 
-def two_hop_score_order2(h_tnet: hyperTN, i=0) -> dict:
+def local_cross_order_weight(h_tnet: hyperTN, i, supsub='all') -> dict:
+    ''''''
+    assert supsub in ['all', 'subset', 'superset']
+    ts = h_tnet.time_division(which='all')
+    agg_hyperlinks = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[i]])
+    metric = dict().fromkeys(agg_hyperlinks, 0)
+
+    for hlink in metric:
+        subsupset = []
+        if supsub == 'all':
+            subsupset = [k for k in agg_hyperlinks if
+                         (k.issubset(hlink) or k.issuperset(hlink)) and len(k) != len(hlink)]
+        elif supsub == 'subset':
+            subsupset = [k for k in agg_hyperlinks if k.issubset(hlink) and len(k) != len(hlink)]
+        elif supsub == 'superset':
+            subsupset = [k for k in agg_hyperlinks if k.issuperset(hlink) and len(k) != len(hlink)]
+        if len(subsupset) > 0:
+            metric[hlink] = agg_hyperlinks[hlink] * np.sum([agg_hyperlinks[s] for s in subsupset])
+
+    return metric
+
+
+def local_cross_order_effective_weight(h_tnet: hyperTN, i, supsub='all') -> dict:
     '''
-    calculate the 2-walk metric for pairwise links, which is also #2-hop time-respecting walks (minimum hop paths)
+    Local cross-order effective weight with temporal information.
     :param h_tnet:
-    :param alpha:
     :param i:
     :return:
     '''
-    with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 't_division.json'), 'r') as f:
-        ts = json.loads(f.read().rstrip('\n'))
+    assert supsub in ['all', 'subset', 'superset']
+    ts = h_tnet.time_division(which='all')
     agg_hyperlinks = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[i]])
-    hlinks_order2_weights_t = dict().fromkeys([k for k in agg_hyperlinks if len(k) == 2], 0)  # link weight at time t
-    hlinks_order2_metric = dict().fromkeys([k for k in agg_hyperlinks if len(k) == 2], 0)
+    metric = dict().fromkeys(agg_hyperlinks, 0)
 
-    adj_mat_order2 = np.zeros((h_tnet.n, h_tnet.n), dtype=bool)  # adjacency matrix encoding pairwise connection
+    hlink_subsupset = dict().fromkeys(agg_hyperlinks)
+
+    for hlink in hlink_subsupset:  # construct the sub/superset.
+        if hlink_subsupset[hlink] is None:
+            hlink_subsupset[hlink] = []
+        for hlink_ in agg_hyperlinks:
+            if len(hlink_) != len(hlink):
+                if supsub == 'all' and (hlink_.issuperset(hlink) or hlink_.issubset(hlink)):
+                    hlink_subsupset[hlink].append(hlink_)
+                elif supsub == 'subset' and hlink_.issubset(hlink):
+                    hlink_subsupset[hlink].append(hlink_)
+                elif supsub == 'superset' and hlink_.issuperset(hlink):
+                    hlink_subsupset[hlink].append(hlink_)
+
+    hlink_weight_t = dict().fromkeys([k for k in agg_hyperlinks], 0)
+
     for hlinks in h_tnet.hypercontacts[:ts[i]]:
         for hlink in hlinks:
-            if len(hlink) > 2:
-                continue
-            node1, node2 = hlink
-            adj_mat_order2[node1, node2] = True
-            adj_mat_order2[node2, node1] = True
+            hlink_weight_t[hlink] += 1
+        for hlink in hlinks:
+            for subsupset in hlink_subsupset[hlink]:
+                metric[subsupset] += agg_hyperlinks[subsupset] - hlink_weight_t[subsupset]
+
+    return metric
+
+def local_effective_superset_metric(h_tnet: hyperTN, i, order, beta) -> dict:
+    ts = h_tnet.time_division(which='all')
+    agg_hyperlinks = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[i]])
+    metric = dict().fromkeys([k for k in agg_hyperlinks if len(k) == order], 0)
+    hlinks_weight_t = dict().fromkeys(metric, 0)
 
     for hlinks in h_tnet.hypercontacts[:ts[i]]:
+        for hlink in hlinks:
+            if hlink in metric:
+                hlinks_weight_t[hlink] += 1
+        for hlink in hlinks:
+            for hl in metric:
+                if hlink.issuperset(hl):
+                    metric[hl] += (0 + beta * (len(hlink)-2)) * (agg_hyperlinks[hl] - hlinks_weight_t[hl])
+
+    return metric
+
+def two_hop_walk_score(h_tnet: hyperTN, subnet) -> dict:
+    '''
+    calculate the 2-walk metric for all links, which is also #2-hop time-respecting walks (minimum hop paths)
+    :param h_tnet:
+    :param alpha:
+    :return:
+    '''
+    ts = h_tnet.time_division(which='all')
+    agg_hyperlinks = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[subnet]])
+    hlinks_weights_t = dict().fromkeys([k for k in agg_hyperlinks], 0)  # link weight at time t
+    metric = dict().fromkeys([k for k in agg_hyperlinks], 0)
+
+    for hlinks in h_tnet.hypercontacts[:ts[subnet]]:
         for hlink in hlinks:  # update the link weights at each time
-            if len(hlink) > 2:
-                continue
-            hlinks_order2_weights_t[hlink] += 1
+            hlinks_weights_t[hlink] += 1
         for hlink in hlinks:
-            if len(hlink) > 2:
+            if len(hlink) > 2:  # only consider pairwise link two-hop away
                 continue
-            node1, node2 = hlink
-            for node in np.nonzero(adj_mat_order2[node1])[0]:
-                if node == node2:
-                    continue
-                link_toupdate = frozenset([node, node1])
-                hlinks_order2_metric[link_toupdate] += agg_hyperlinks[link_toupdate] - hlinks_order2_weights_t[
-                    link_toupdate]
-            for node in np.nonzero(adj_mat_order2[node2])[0]:
-                if node == node1:
-                    continue
-                link_toupdate = frozenset([node, node2])
-                hlinks_order2_metric[link_toupdate] += agg_hyperlinks[link_toupdate] - hlinks_order2_weights_t[
-                    link_toupdate]
+            for hl in metric:
+                if len(hl.intersection(hlink)) == 1:
+                    metric[hl] += agg_hyperlinks[hl] - hlinks_weights_t[hl]
 
-    return hlinks_order2_metric
+    return metric
+
+def save_centrality_metrics(h_tnet: hyperTN, subnet, which):
+    import pickle
+    global metric
+    if which == 'local_effective_sum_metric':
+        metric = local_effective_sum_metric(h_tnet, subnet)
+    elif which == 'local_effective_sum_inverse_metric':
+        metric = local_effective_sum_inverse_metric(h_tnet, subnet)
+    elif which == 'two_hop_walk_score':
+        metric = two_hop_walk_score(h_tnet, subnet)
+
+    results_dir = path.join(PATH_TO_RESULTS, h_tnet.dataname, 'centrality')
+    if not os.path.exists(results_dir):
+        os.mkdir(results_dir)
+
+    with open(path.join(results_dir, 'T_0.{0}-{1}.pkl'.format(subnet + 1 if subnet>=0 else len(h_tnet.time_division(which='all')), which)), 'wb') as f:
+        pickle.dump(metric, f)
 
 
 if __name__ == '__main__':
-    dataset = 'infectious'
-    h_tnet = hyperTN(dataset)
-    # metrics1 = effective_weights_order3(h_tnet)
-    # metrics2 = local_effective_weights(h_tnet)
+    parser = argparse.ArgumentParser(description='Link centrality measures')
+    parser.add_argument('--dataset', type=str, default='infectious', help='dataset')
+    parser.add_argument('--beta', type=float, default=0.01, help='infectivity for pairwise interaction')
+    parser.add_argument('--theta', type=float, default=2, help='threshold')
+    parser.add_argument('--metric', type=str, default='local_effective_sum_metric', help='which metric')
+    args = parser.parse_args()
+    h_tnet = hyperTN(args.dataset)
+    save_centrality_metrics(h_tnet, subnet=-1, which=args.metric)
