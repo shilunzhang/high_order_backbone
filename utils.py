@@ -39,9 +39,26 @@ def overlap_top_N(seq1, seq2, top_n) -> float:  # TODO
 
     return np.mean(overlap)
 
+def cosine_similarity(arr1: np.array, arr2: np.array):
+    return [np.dot(arr1, arr2) / (np.linalg.norm(arr1, ord=2) * np.linalg.norm(arr2, ord=2))]
+
 def counter_total(ct: Counter) -> int:
     sum = 0
     for k in ct:
         sum += ct[k]
 
     return sum
+
+def rename_dir_names(cwd: str):
+    import os
+    os.chdir(cwd)
+    for bt in [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]:
+        if os.path.exists('beta1_{0:.2f}-beta2_{0:.2f}-theta_1.0'.format(bt)):
+            os.rename('beta1_{0:.2f}-beta2_{0:.2f}-theta_1.0'.format(bt), 'beta1_{0:.3f}-beta2_{0:.3f}-theta_1.0'.format(bt))
+        if os.path.exists('beta1_{0:.2f}-beta2_{0:.2f}-theta_-1.0'.format(bt)):
+            os.rename('beta1_{0:.2f}-beta2_{0:.2f}-theta_-1.0'.format(bt), 'beta1_{0:.3f}-beta2_{0:.3f}-theta_-1.0'.format(bt))
+
+if __name__ == '__main__':
+    dataname = 'malawi'
+    work_path = '/tudelft.net/staff-bulk/ewi/insy/MMC/shilunzhang/high_order_backbone/results/{0}/threshold_model/'.format(dataname)
+    rename_dir_names(work_path)

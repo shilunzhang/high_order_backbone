@@ -1,0 +1,9 @@
+#!/bin/sh
+#SBATCH --qos=short
+#SBATCH --time=00:10:00
+#SBATCH --ntasks=1
+#SBATCH --mem=2G
+#SBATCH --output=1.out
+#SBATCH --mail-type=FAIL
+
+./submit_multiparams $1

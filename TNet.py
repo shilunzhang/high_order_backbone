@@ -47,11 +47,11 @@ class TN:
         data_arr = np.loadtxt(path.join(data_path, f'{self.dataname}.dat'), dtype=np.int32)  # contacts record.
         if max(data_arr[:, 0]) > 5e4:
             data_arr = data_arr[:, [1, 2, 0]]
-        data_arr[:, 2] = data_arr[:, 2] // self.resolution  # one time unit denotes the resolution.
+        data_arr[:, 2] = (data_arr[:, 2] - data_arr[:, 2].min()) // self.resolution  # one time unit denotes the resolution.
 
         return self._relabel_id(data_arr)
 
-    def _remove_duplicated_contacts(self, allow_selfloop=False):
+    def remove_duplicated_contacts(self, allow_selfloop=False):
         # remove multiple contacts between two nodes in a single timestamp
         contact_m = np.diag([~allow_selfloop] * self.n)
         res_idx = np.ones(len(self.contacts), dtype=bool)
@@ -234,15 +234,8 @@ def maximal_cliques_BK(N, links):
 
 
 if __name__ == '__main__':
-    gname = 'primaryschool'
-    tnet = TN(gname, resolution=1)
+    gname = 'hospital'
+    tnet = TN(gname, datapath='D:\\Web download\\detailed_list_of_contacts_Hospital.dat_', resolution=1)
+    tnet.remove_duplicated_contacts()
     tnet.pairwise2hyperlink()
     # aggregate_hyperTN(tnet.pairwise2hyperlink())
-    import networkx as nx
-    import matplotlib.pyplot as plt
-    # g = nx.barbell_graph(5, 9)
-    # print(g.nodes(), g.edges())
-    # print(list(nx.find_cliques(g)))
-    # print(list(maximal_cliques_BK(len(g), g.edges())))
-    # nx.draw_networkx(g)
-    # plt.show()
