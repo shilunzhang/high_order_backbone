@@ -3,6 +3,9 @@ from random import sample
 import numpy as np
 from scipy.stats import rankdata
 
+
+def jaccard_similarity(s1, s2):
+    return len(s1.intersection(s2)) / len(s1.union(s2))
 def overlap_top_N(seq1, seq2, top_n) -> float:  # TODO
     '''
     overlap of top_n elements in two sequences.
@@ -32,7 +35,7 @@ def overlap_top_N(seq1, seq2, top_n) -> float:  # TODO
     # print(top_links2_a, top_links2_b)
 
     overlap = []
-    for n in range(100):
+    for n in range(10):
         top_links1 = top_links1_a + sample(top_links1_b, k=top_n - len(top_links1_a))
         top_links2 = top_links2_a + sample(top_links2_b, k=top_n - len(top_links2_a))
         overlap.append(len(np.intersect1d(top_links1, top_links2)) / top_n)

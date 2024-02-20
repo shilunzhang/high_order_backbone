@@ -64,7 +64,7 @@ class hyperTN:
 
         return cnt
 
-    def time_division(self, which='all'):
+    def time_division(self, which='tmax'):
         '''
         the division into subnets according to the prevalence
         :return:
@@ -76,6 +76,24 @@ class hyperTN:
             return ts
         elif which == 'largest':
             return len(ts) - 1, ts[-1]
+        elif which == 'tmax':  # the earliest timestamp to reach the highest prevalence during the whole period
+            if path.exists(path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model', 'tmax.json')):
+                if not path.exists(path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model', 'beta1_1.000-beta2_1.000-theta_1.0', 'prevalence2d.txt')):
+                    prevalence = np.load(path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model', 'beta1_1.000-beta2_1.000-theta_1.0', 'prevalence1d.npy'))
+                else:
+                    prevalence = np.loadtxt(path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model', 'beta1_1.000-beta2_1.000-theta_1.0', 'prevalence2d.txt'), delimiter='\t', dtype=np.float64).mean(axis=1)
+                if max(prevalence) == self.n:
+                    ts = np.argmax(prevalence) + 1
+                else:
+                    ts = len(prevalence)
+                with open(path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model', 'tmax.json'), 'w') as f:
+                    f.write(str(ts))
+                print(np.argmax(prevalence)+1, max(prevalence), self.n)
+                return ts
+            else:
+                with open(path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model', 'tmax.json'), 'r') as f:
+                    ts = int(f.readline())
+                return ts
         else:
             print('which mode?')
 
@@ -416,9 +434,10 @@ def nonlinear_model(seed: frozenset):
     pass
 
 if __name__ == '__main__':
-    dname = 'workplace13'
+    dname = 'ht09'
     # tnet = TN(dname)
     hyper_tnet = hyperTN(dname)
+    print(hyper_tnet.time_division()/hyper_tnet.T)
     # hyper_tnet.shuffle_order_within_snapshot()
     # spread_diff_seeds(hyper_tnet, {'beta1': 1.0, 'beta2': 1.0, 'theta': hyper_tnet.n})
     # print(groupsize_statistics(hyper_tnet))

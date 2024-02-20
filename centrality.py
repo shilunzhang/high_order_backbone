@@ -654,7 +654,7 @@ def two_hop_walk_score(h_tnet: hyperTN, subnet) -> dict:
     return metric
 
 
-def time_independent_link_local_metric(h_tnet: hyperTN, neighborhood='subplink', alpha=1.0, subnet=-1) -> dict:
+def time_independent_link_local_metric(h_tnet: hyperTN, order, neighborhood='subplink', alpha=1.0, subnet=-1) -> dict:
     '''
     Time-independent local metric for higher-order links in temporal higher-order networks.
     :param h_tnet: the dataset
@@ -663,35 +663,47 @@ def time_independent_link_local_metric(h_tnet: hyperTN, neighborhood='subplink',
     :param subnet: which subnetwork to
     :return: dictionary of metrics for each higher-order link
     '''
-    assert neighborhood in {'subplink', 'adjplink'}
+    if order == 2:
+        assert neighborhood in {'adjplink', 'adjlink'}
+    elif order > 2:
+        assert neighborhood in {'subplink', 'adjplink'}
+
     ts = h_tnet.time_division(which='all')
-    agg_hyperlinks = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[subnet]])
-    metrics = dict().fromkeys([k for k in agg_hyperlinks if len(k) >= 3], 0.0)
+    T = ts[subnet] if isinstance(subnet, int) else h_tnet.T
+
+    agg_hyperlinks = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:T])
+    metrics = dict().fromkeys([k for k in agg_hyperlinks if len(k) == order], 0.0)
 
     # construct target neighborhood links which considered in the metric
-    L = dict().fromkeys([k for k in agg_hyperlinks if len(k) >= 3])
+    L = dict().fromkeys([k for k in agg_hyperlinks if len(k) == order])
     for hlink in L:
         L[hlink] = []
 
-    for hlink in L:
-        for plink in agg_hyperlinks:
-            if len(plink) == 2:
-                if neighborhood == 'subplink':
-                    if plink.issubset(hlink):
-                        L[hlink].append(plink)
-                elif neighborhood == 'adjplink':
-                    if len(plink.intersection(hlink)) >= 1:
-                        L[hlink].append(plink)
+    if neighborhood == 'subplink':  # then the target order > 2
+        for hlink in L:
+            for plink in agg_hyperlinks:
+                if len(plink) == 2 and plink.issubset(hlink):
+                    L[hlink].append(plink)
+    elif neighborhood == 'adjplink':
+        for hlink in L:
+            for plink in agg_hyperlinks:
+                if len(plink) == 2 and plink != hlink and len(plink.intersection(hlink)) >= 1:
+                    L[hlink].append(plink)
+    elif neighborhood == 'adjlink':  # then the target order is 2
+        for hlink in L:
+            for link in agg_hyperlinks:
+                if link != hlink and len(link.intersection(hlink)) >= 1:
+                    L[hlink].append(link)
 
     for hlink in metrics:  # update higher-order links
-        plinks_weight = 0
-        for plink in L[hlink]:
-            plinks_weight += agg_hyperlinks[plink]
-        metrics[hlink] = agg_hyperlinks[hlink] * (1 + plinks_weight)**alpha
+        links_weight = 0
+        for link in L[hlink]:
+            links_weight += agg_hyperlinks[link]
+        metrics[hlink] = agg_hyperlinks[hlink] * (1 + links_weight)**alpha
 
     return metrics
 
-def time_dependent_link_local_metric(h_tnet: hyperTN, neighborhood='subplink', alpha=1.0, subnet=-1) -> dict:
+def time_dependent_link_local_metric(h_tnet: hyperTN, order, neighborhood='subplink', alpha=1.0, subnet=-1) -> dict:
     '''
     Time-dependent local metric for higher-order links in temporal higher-order networks.
     :param h_tnet: the dataset
@@ -700,42 +712,53 @@ def time_dependent_link_local_metric(h_tnet: hyperTN, neighborhood='subplink', a
     :param subnet: which subnetwork to
     :return: dictionary of metrics for each higher-order link
     '''
-    assert neighborhood in {'subplink', 'adjplink'}
-    ts = h_tnet.time_division(which='all')
-    agg_hyperlinks = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[subnet]])
-    metrics = dict().fromkeys([k for k in agg_hyperlinks if len(k) >= 3], 0)
+    if order == 2:
+        assert neighborhood in {'adjplink', 'adjlink'}
+    elif order > 2:
+        assert neighborhood in {'subplink', 'adjplink'}
 
-    # construct target neighborhood links which considered in the metric
-    L = dict().fromkeys([k for k in agg_hyperlinks if len(k) >= 3])
+    ts = h_tnet.time_division(which='all')
+    T = ts[subnet] if isinstance(subnet, int) else h_tnet.T
+
+    agg_hyperlinks = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:T])
+    metrics = dict().fromkeys([k for k in agg_hyperlinks if len(k) == order], 0)
+
+    # construct target neighborhood links in the metric, L is a dict that records the target neighborhood
+    L = dict().fromkeys([k for k in agg_hyperlinks if len(k) == order])
     for hlink in L:
         L[hlink] = []
 
-    for hlink in L:
-        for plink in agg_hyperlinks:
-            if len(plink) == 2:
-                if neighborhood == 'subplink':
-                    if plink.issubset(hlink):
-                        L[hlink].append(plink)
-                elif neighborhood == 'adjplink':
-                    if len(plink.intersection(hlink)) >= 1:
-                        L[hlink].append(plink)
+    if neighborhood == 'subplink':  # then the target order is > 2, i.e., len(hlink) > 2
+        for hlink in L:
+            for plink in agg_hyperlinks:
+                if len(plink) == 2 and plink.issubset(hlink):
+                    L[hlink].append(plink)
+    elif neighborhood == 'adjplink':
+        for hlink in L:
+            for plink in agg_hyperlinks:
+                if len(plink) ==2 and plink != hlink and len(plink.intersection(hlink)) >= 1:
+                    L[hlink].append(plink)
+    elif neighborhood == 'adjlink':  # then the target order is 2
+        for hlink in L:
+            for link in agg_hyperlinks:
+                if link != hlink and len(link.intersection(hlink)) >= 1:
+                    L[hlink].append(link)
 
-    plink_weight_t = dict().fromkeys([k for k in agg_hyperlinks if len(k) == 2], 0)
+    link_weight_t = dict().fromkeys([k for k in agg_hyperlinks], 0)  # the temporal link weight
 
-    for hlinks in h_tnet.hypercontacts[:ts[subnet]]:
+    for hlinks in h_tnet.hypercontacts[:T]:
         for hlink in hlinks:
-            if len(hlink) >= 3:
-                neigh_plink_weight = 0
+            if len(hlink) == order:
+                neigh_link_weight = 0
                 for hl in L[hlink]:
-                    neigh_plink_weight += plink_weight_t[hl]
-                metrics[hlink] += (1+neigh_plink_weight)**alpha
+                    neigh_link_weight += link_weight_t[hl]
+                metrics[hlink] += (1+neigh_link_weight)**alpha
         for hlink in hlinks:
-            if len(hlink) == 2:
-                plink_weight_t[hlink] += 1
+            link_weight_t[hlink] += 1
 
     return metrics
 
-def save_centrality_metrics(h_tnet: hyperTN, which, neighborhood='subplink', alpha=1.0, subnet=-1):
+def save_centrality_metrics(h_tnet: hyperTN, which, order, neighborhood='subplink', alpha=1.0, subnet=-1):
     import pickle
     global metric
 
@@ -743,45 +766,18 @@ def save_centrality_metrics(h_tnet: hyperTN, which, neighborhood='subplink', alp
     if not os.path.exists(results_dir):
         os.mkdir(results_dir)
 
-    if which == 'local_subplink_prod_metric':
-        metric = local_subplink_prod_metric(h_tnet, subnet)
-    elif which == 'local_subplink_division_metric':
-        metric = local_subplink_division_metric(h_tnet, subnet)
-    elif which == 'local_adjplink_prod_metric':
-        metric = local_adjplink_prod_metric(h_tnet, subnet)
-    elif which == 'local_adjplink_division_metric':
-        metric = local_adjplink_division_metric(h_tnet, subnet)
-    elif which == 'local_adjlink_division_metric':
-        metric = local_adjlink_division_metric(h_tnet, subnet)
-    elif which == 'local_subsuplink_division_metric':
-        metric = local_subsuplink_division_metric(h_tnet, subnet)
-    elif which == 'local_subplink_prod_temporal_metric':
-        metric = local_subplink_prod_temporal_metric(h_tnet, subnet)
-    elif which == 'local_subplink_division_temporal_metric':
-        metric = local_subplink_division_temporal_metric(h_tnet, subnet)
-    elif which == 'local_adjplink_prod_temporal_metric':
-        metric = local_adjplink_prod_temporal_metric(h_tnet, subnet)
-    elif which == 'local_adjplink_division_temporal_metric':
-        metric = local_adjplink_division_temporal_metric(h_tnet, subnet)
-    elif which == 'local_adjlink_division_temporal_metric':
-        metric = local_adjlink_division_temporal_metric(h_tnet, subnet)
-    elif which == 'local_subsuplink_division_temporal_metric':
-        metric = local_subsuplink_division_temporal_metric(h_tnet, subnet)
-    elif which == 'time_independent_link_local_metric':
-        metric = time_independent_link_local_metric(h_tnet, neighborhood=neighborhood, alpha=alpha, subnet=subnet)
-        with open(path.join(results_dir, 'T_0.{0}-{1}.pkl'.format(
-                subnet + 1 if subnet >= 0 else len(h_tnet.time_division(which='all')), which+'_'+neighborhood+'_alpha'+str(alpha))), 'wb') as f:
-            pickle.dump(metric, f)
-        return metric
-    elif which == 'time_dependent_link_local_metric':
-        metric = time_dependent_link_local_metric(h_tnet, neighborhood=neighborhood, alpha=alpha, subnet=subnet)
-        with open(path.join(results_dir, 'T_0.{0}-{1}.pkl'.format(
-                subnet + 1 if subnet >= 0 else len(h_tnet.time_division(which='all')), which+'_'+neighborhood+'_alpha'+str(alpha))), 'wb') as f:
-            pickle.dump(metric, f)
-        return metric
+    suffix_subnet = ''
+    if isinstance(subnet, int):
+        suffix_subnet = '_0.{0}'.format(subnet + 1 if subnet >= 0 else len(h_tnet.time_division(which='all')))
 
-    with open(path.join(results_dir, 'T_0.{0}-{1}.pkl'.format(subnet + 1 if subnet>=0 else len(h_tnet.time_division(which='all')), which)), 'wb') as f:
-        pickle.dump(metric, f)
+    if which == 'time_independent_link_local_metric':
+        metric = time_independent_link_local_metric(h_tnet, order=order, neighborhood=neighborhood, alpha=alpha, subnet=subnet)
+        with open(path.join(results_dir, 'T{0}-order{1}-{2}.pkl'.format(suffix_subnet, order, which+'_'+neighborhood+'_alpha'+str(alpha))), 'wb') as f:
+            pickle.dump(metric, f)
+    elif which == 'time_dependent_link_local_metric':
+        metric = time_dependent_link_local_metric(h_tnet, order=order, neighborhood=neighborhood, alpha=alpha, subnet=subnet)
+        with open(path.join(results_dir, 'T{0}-order{1}-{2}.pkl'.format(suffix_subnet, order, which+'_'+neighborhood+'_alpha'+str(alpha))), 'wb') as f:
+            pickle.dump(metric, f)
 
     return metric
 
@@ -789,11 +785,12 @@ def save_centrality_metrics(h_tnet: hyperTN, which, neighborhood='subplink', alp
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Link centrality measures')
     parser.add_argument('--dataset', type=str, default='infectious', help='dataset')
-    parser.add_argument('--beta', type=float, default=0.01, help='infectivity for pairwise interaction')
-    parser.add_argument('--theta', type=float, default=2, help='threshold')
-    parser.add_argument('--metric', type=str, default='local_effective_sum_metric', help='which metric')
+    # parser.add_argument('--beta', type=float, default=0.01, help='infectivity for pairwise interaction')
+    # parser.add_argument('--theta', type=float, default=2, help='threshold')
+    parser.add_argument('--metric', type=str, default='time_independent_link_local_metric', help='which metric')
+    parser.add_argument('--order', type=int, default=3, help='which order')
     parser.add_argument('--neighborhood', type=str, default='subplink', help='which neighborhood')
     parser.add_argument('--alpha', type=float, default=1.0, help='alpha')
     args = parser.parse_args()
     h_tnet = hyperTN(args.dataset)
-    save_centrality_metrics(h_tnet, which=args.metric, neighborhood=args.neighborhood, alpha=args.alpha, subnet=-1)
+    save_centrality_metrics(h_tnet, which=args.metric, order=args.order, neighborhood=args.neighborhood, alpha=args.alpha, subnet=-1)
