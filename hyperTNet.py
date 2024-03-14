@@ -64,12 +64,27 @@ class hyperTN:
 
         return cnt
 
-    def time_division(self, which='tmax'):
+    def time_division(self, which):
+        '''
+        the division into subnets according to the prevalence, i.e., 30%, 60%, 90% of the maximum prevalence it reaches in case of \beta==1.0 and \Theta==1.
+        :return:
+        '''
+        with open(path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model', 't_division.json'), 'r') as f:
+            ts = json.loads(f.read().rstrip('\n'))
+
+        if which == 'all':
+            return ts
+        elif which == 'largest':
+            return len(ts) - 1, ts[-1]
+        else:
+            print('which mode?')
+
+    def time_division_1(self, which='tmax'):
         '''
         the division into subnets according to the prevalence
         :return:
         '''
-        with open(path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model', 't_division.json'), 'r') as f:
+        with open(path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model_v2', 't_division.json'), 'r') as f:
             ts = json.loads(f.read().rstrip('\n'))
 
         if which == 'all':
@@ -103,15 +118,23 @@ class hyperTN:
     def return_backbone(self, params: dict, model='hyper', subnet=0):
         import pickle
         n_realizations = 5000 if self.datatype == 'phy-contact' else 100
+
+        suffix_subnet = ''
+        T = self.T
+        if isinstance(subnet, int):
+            T = self.time_division(which='all')[subnet]
+            suffix_subnet = '_0.{0}'.format(subnet + 1)
+
         beta, theta = params['beta'], params['theta']
         if isinstance(theta, float):
             theta = '{0:.1f}'.format(theta)
         elif isinstance(theta, str):
             theta = reduce(lambda x,y: x+'o'+y, theta.split('/'))
+
         if model == 'hyper':
-            pkl_path = path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model',
+            pkl_path = path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model_v2',
                       'beta1_{0:.3f}-beta2_{1:.3f}-theta_{2}'.format(beta, beta, theta),
-                      'T_0.{0}-backbone.pkl'.format(subnet+1))
+                      'T{0}-backbone.pkl'.format(suffix_subnet))
             with open(pkl_path, 'rb') as f:
                 backbone = pickle.load(f)
             backbone = {k: v / n_realizations for k, v in backbone.items()}

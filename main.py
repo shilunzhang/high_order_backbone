@@ -10,11 +10,38 @@ from TNet import *
 from hyperTNet import hyperTN
 
 def identify_time_periods(h_tnet: hyperTN, save_res=True):
-    if not path.exists(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 'beta1_1.000-beta2_1.000-theta_1.0', 'prevalence2d.txt')):
-        prevalence = np.load(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 'beta1_1.000-beta2_1.000-theta_1.0', 'prevalence1d.npy'))
+    if not path.exists(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model_v2', 'beta1_1.000-beta2_1.000-theta_1.0', 'prevalence2d.txt')):
+        prevalence = np.load(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model_v2', 'beta1_1.000-beta2_1.000-theta_1.0', 'prevalence1d.npy'))
     else:
         prevalence = np.loadtxt(
-            path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 'beta1_1.000-beta2_1.000-theta_1.0',
+            path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model_v2', 'beta1_1.000-beta2_1.000-theta_1.0',
+                      'prevalence2d.txt'), delimiter='\t', dtype=np.float64).mean(axis=1)
+    max_prevalence = np.max(prevalence)
+    thresholds = [0.3, 0.6, 0.9]
+    t_thresholds = -np.ones(len(thresholds), dtype=np.int32)
+    i = 0
+    for t, p in enumerate(prevalence):
+        if p >= thresholds[i] * max_prevalence:
+            # print(t, p)
+            t_thresholds[i] = t+1
+            i += 1
+        if i >= len(thresholds):
+            break
+
+    print(np.array(thresholds) * max_prevalence)
+    print([prevalence[t-1] for t in t_thresholds])
+
+    if save_res:
+        with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 't_division.json'), 'w') as f:
+            f.write(json.dumps(t_thresholds[t_thresholds>0].tolist()))
+    return t_thresholds[t_thresholds>0]
+
+def identify_time_periods_v1(h_tnet: hyperTN, save_res=True):
+    if not path.exists(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model_v2', 'beta1_1.000-beta2_1.000-theta_1.0', 'prevalence2d.txt')):
+        prevalence = np.load(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model_v2', 'beta1_1.000-beta2_1.000-theta_1.0', 'prevalence1d.npy'))
+    else:
+        prevalence = np.loadtxt(
+            path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model_v2', 'beta1_1.000-beta2_1.000-theta_1.0',
                       'prevalence2d.txt'), delimiter='\t', dtype=np.float64).mean(axis=1)
     thresholds = np.linspace(0.1, 1, 10) * h_tnet.n
     t_thresholds = -np.ones(len(thresholds), dtype=np.int32)
@@ -28,7 +55,7 @@ def identify_time_periods(h_tnet: hyperTN, save_res=True):
             break
 
     if save_res:
-        with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 't_division.json'), 'w') as f:
+        with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model_v2', 't_division.json'), 'w') as f:
             f.write(json.dumps(t_thresholds[t_thresholds>0].tolist()))
     return t_thresholds[t_thresholds>0]
 
@@ -54,7 +81,7 @@ def spread_one_pass(h_tnet: hyperTN, params, rid=0, model='threshold_model'):
     with open(path.join(res_path, 'backbone{0}.pkl'.format(suffix)), 'wb') as f:
         pickle.dump(backbones, f)
 
-def spread_all_subnets(h_tnet: hyperTN, params, rid=0, model='threshold_model', subset=-1):
+def spread_all_subnets(h_tnet: hyperTN, params, rid=0, model='threshold_model'):
     res_path = path.join(PATH_TO_RESULTS, h_tnet.dataname, model,
                          'beta1_{0:.3f}-beta2_{1:.3f}-theta_{2}'.format(params['beta1'], params['beta2'],
                                                                           reduce(lambda x,y: x+'o'+y, params['theta'].split('/'))))
@@ -63,17 +90,8 @@ def spread_all_subnets(h_tnet: hyperTN, params, rid=0, model='threshold_model', 
 
     suffix = '-r{0}'.format(rid)
     Ts = h_tnet.time_division(which='all')
-    if isinstance(subset, int):
-        subset = subset if not subset == -1 else len(Ts) + subset
-        assert subset in list(range(len(Ts)))
-        subset = [subset]
-    else:
-        assert subset == 'all'
-        subset = list(range(len(Ts)))
 
     for i, T in list(enumerate(Ts))[::-1]:
-        if i not in subset:
-            continue
         print(i, T)
         # if path.exists(path.join(res_path, 'T_0.{0}-backbone{1}.pkl'.format(i+1, suffix))):
         #     print(path.join(res_path, 'T_0.{0}-backbone{1}.pkl'.format(i+1, suffix)), ' EXISTS..')
@@ -87,8 +105,8 @@ def spread_all_subnets(h_tnet: hyperTN, params, rid=0, model='threshold_model', 
 
         # np.savetxt(path.join(res_path, 'T_0.{0}-prevalence2d{1}.txt'.format(i+1, suffix)), prevalence, fmt='%6.1f', delimiter='\t')
         # np.savetxt(path.join(res_path, 'T_0.{0}-prevalence1d{1}.txt'.format(i+1, suffix)), prevalence.mean(axis=1), fmt='%6.1f', delimiter='\t')
-        np.save(path.join(res_path, 'T_0.{0}-prevalence1d{1}.npy'.format(i+1, suffix)), prevalence.mean(axis=1))
-        with open(path.join(res_path, 'T_0.{0}-backbone{1}.pkl'.format(i+1, suffix)), 'wb') as f:
+        np.save(path.join(res_path, 'T_0.{0}-prevalence1d{1}.npy'.format(3*(i+1), suffix)), prevalence.mean(axis=1))
+        with open(path.join(res_path, 'T_0.{0}-backbone{1}.pkl'.format(3*(i+1), suffix)), 'wb') as f:
             pickle.dump(backbones, f)
 
 def spread_whole_period(h_tnet: hyperTN, params, rid=0, model='threshold_model'):
@@ -127,8 +145,8 @@ def parallel_run(h_tnet: hyperTN, model, params, n_tasks_per_array, array_id):
             print('Path already exists. ({0})'.format(path.exists(res_path)))
 
     print('beta: ', params['beta1'], ' theta: ', params['theta'])
-    # Parallel(n_jobs=n_tasks_per_array, backend='loky')(delayed(spread_all_subnets)(h_tnet, params, r, model) for r in range((array_id-1)*n_tasks_per_array+1, array_id*n_tasks_per_array+1))
-    Parallel(n_jobs=n_tasks_per_array, backend='loky')(delayed(spread_whole_period)(h_tnet, params, r, model) for r in range((array_id-1)*n_tasks_per_array+1, array_id*n_tasks_per_array+1))
+    Parallel(n_jobs=n_tasks_per_array, backend='loky')(delayed(spread_all_subnets)(h_tnet, params, r, model) for r in range((array_id-1)*n_tasks_per_array+1, array_id*n_tasks_per_array+1))
+    # Parallel(n_jobs=n_tasks_per_array, backend='loky')(delayed(spread_whole_period)(h_tnet, params, r, model) for r in range((array_id-1)*n_tasks_per_array+1, array_id*n_tasks_per_array+1))
 
 
 if __name__ == '__main__':

@@ -758,6 +758,30 @@ def time_dependent_link_local_metric(h_tnet: hyperTN, order, neighborhood='subpl
 
     return metrics
 
+def appearance_time(h_tnet: hyperTN, subnet, which='min'):
+    ts = h_tnet.time_division(which='all')
+    T = h_tnet.T
+    if isinstance(subnet, int):
+        T = ts[subnet]
+    agg_hnet = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:T])
+
+    appear_time_dict = dict.fromkeys(agg_hnet)
+    for hl in appear_time_dict:
+        appear_time_dict[hl] = []
+
+    for t, contacts in enumerate(h_tnet.hypercontacts[:T]):
+        for contact in contacts:
+            hl = frozenset(contact)
+            appear_time_dict[hl].append(t)
+
+    for hl in appear_time_dict:
+        if which == 'min':
+            appear_time_dict[hl] = np.min(appear_time_dict[hl])
+        elif which == 'mean':
+            appear_time_dict[hl] = np.mean(appear_time_dict[hl])
+
+    return appear_time_dict
+
 def save_centrality_metrics(h_tnet: hyperTN, which, order, neighborhood='subplink', alpha=1.0, subnet=-1):
     import pickle
     global metric
@@ -793,4 +817,4 @@ if __name__ == '__main__':
     parser.add_argument('--alpha', type=float, default=1.0, help='alpha')
     args = parser.parse_args()
     h_tnet = hyperTN(args.dataset)
-    save_centrality_metrics(h_tnet, which=args.metric, order=args.order, neighborhood=args.neighborhood, alpha=args.alpha, subnet=-1)
+    save_centrality_metrics(h_tnet, which=args.metric, order=args.order, neighborhood=args.neighborhood, alpha=args.alpha, subnet='T')

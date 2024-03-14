@@ -6,7 +6,7 @@ import argparse
 from functools import reduce
 from collections import Counter
 import numpy as np
-from scipy.stats import rankdata, pearsonr, kendalltau, spearmanr
+from scipy.stats import rankdata, pearsonr, kendalltau, spearmanr, binned_statistic
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -120,42 +120,42 @@ def prevalence_diff(xaxis='beta', yaxis='relative'):
     fig.tight_layout()
     fig.savefig(path.join(PATH_TO_FIGS, 'Prevalence_difference_{0}_{1}.pdf'.format(xaxis, yaxis)), dpi=200)
 
-def integrate_backbones(h_tnet: hyperTN, beta, theta, num_r=100):
+def integrate_backbones(h_tnet: hyperTN, subnet, beta, theta, num_r=100):
+    print(h_tnet.dataname, beta, theta)
+
+    t_end = h_tnet.T
+    subnet_suffix = ''
     ts = h_tnet.time_division(which='all')
-    subnet = len(ts)
+    if isinstance(subnet, int):
+        t_end = ts[subnet]
+        subnet_suffix = '_0.{0}'.format(subnet+1 if subnet>=0 else len(ts))
 
     theta = reduce(lambda x,y: x+'o'+y, theta.split('/'))
-    for i, t in enumerate(ts):
-        if i + 1 != subnet:
-            continue
-        for beta1 in [beta]:
-            print(i, beta1)
-            for beta2 in [beta]:
-                res_path = path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
-                                     'beta1_{0:.3f}-beta2_{1:.3f}-theta_{2}'.format(beta1, beta2, theta))
-                # if path.exists(path.join(res_path, 'T_0.{0}-backbone.pkl'.format(i + 1))):
-                #     print('beta1_{0:.2f}-beta2_{1:.2f}-theta_{2}'.format(beta1, beta2, theta), '/T_0.{0}-backbone.pkl'.format(i + 1), ' existed..')
-                #     if path.exists(path.join(res_path, 'T_0.{0}-prevalence_averaged.npy'.format(i + 1))):
-                #         continue
-                backbone = Counter()
-                prevalence = np.zeros((t, num_r), dtype=float)
-                for r in range(1, num_r + 1):
-                    if r/100 == r//100:
-                        print(r, '/', num_r)
-                    with open(path.join(res_path, 'T_0.{0}-backbone-r{1}.pkl'.format(i + 1, r)), 'rb') as f:
-                        bb = pickle.load(f)
-                        backbone.update(bb)
-                    if os.path.exists(path.join(res_path, 'T_0.{0}-prevalence1d-r{1}.npy'.format(i + 1, r))):
-                        prevalence[:, r - 1] = np.load(path.join(res_path, 'T_0.{0}-prevalence1d-r{1}.npy'.format(i + 1, r))).astype(np.float64)
-                    else:
-                        prevalence[:, r - 1] = np.loadtxt(
-                            path.join(res_path, 'T_0.{0}-prevalence2d-r{1}.txt'.format(i + 1, r)), dtype=float).mean(
-                            axis=1)
-                # return backbone: normalize the weights.
-                prevalence_average = prevalence.mean(axis=1)
-                with open(path.join(res_path, 'T_0.{0}-backbone.pkl'.format(i + 1)), 'wb') as f:
-                    pickle.dump(backbone, f)
-                np.save(path.join(res_path, 'T_0.{0}-prevalence_averaged.npy'.format(i + 1)), prevalence_average)
+    res_path = path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
+                         'beta1_{0:.3f}-beta2_{1:.3f}-theta_{2}'.format(beta, beta, theta))
+
+    if os.path.exists(path.join(res_path, 'T{0}-backbone.pkl'.format(subnet_suffix))):
+        return 0
+
+    backbone = Counter()
+    prevalence = np.zeros((t_end, num_r), dtype=float)
+    for r in range(1, num_r + 1):
+        if r/100 == r//100:
+            print(r, '/', num_r)
+        with open(path.join(res_path, 'T{0}-backbone-r{1}.pkl'.format(subnet_suffix, r)), 'rb') as f:
+            bb = pickle.load(f)
+            backbone.update(bb)
+        if os.path.exists(path.join(res_path, 'T{0}-prevalence1d-r{1}.npy'.format(subnet_suffix, r))):
+            prevalence[:, r - 1] = np.load(path.join(res_path, 'T{0}-prevalence1d-r{1}.npy'.format(subnet_suffix, r))).astype(np.float64)
+        else:
+            prevalence[:, r - 1] = np.loadtxt(
+                path.join(res_path, 'T{0}-prevalence2d-r{1}.txt'.format(subnet_suffix, r)), dtype=float).mean(
+                axis=1)
+    # return backbone: normalize the weights.
+    prevalence_average = prevalence.mean(axis=1)
+    with open(path.join(res_path, 'T{0}-backbone.pkl'.format(subnet_suffix)), 'wb') as f:
+        pickle.dump(backbone, f)
+    np.save(path.join(res_path, 'T{0}-prevalence_averaged.npy'.format(subnet_suffix)), prevalence_average)
 
 
 # beta1 == 1, compare
@@ -527,7 +527,7 @@ def scatter_backbones_weights(h_tnet: hyperTN, beta, theta, ax, order, normaliza
         # ax.set_ylim([xmin, xmax])
 
 
-def scatter_weights_diff_thresholds(h_tnet: hyperTN, theta, order, normalization, ranking=False):
+def scatter_weights_diff_thresholds(h_tnet: hyperTN, theta, normalization, ranking=False):
     beta = [0.001, 0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
     fig, ax = plt.subplots(2, len(beta), figsize=(1.7 * len(beta), 1.7*2))
     for j, b in enumerate(beta):
@@ -539,7 +539,7 @@ def scatter_weights_diff_thresholds(h_tnet: hyperTN, theta, order, normalization
     suffix += '_normalization' if normalization else ''
     suffix += '_rank' if ranking else ''
     fig.savefig(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
-                          'Weights_scatter_diff_thresholds_theta_{0}{1}_.pdf'.format(theta, suffix)), dpi=100)
+                          'Weights_scatter_diff_thresholds_theta_{0}{1}__.pdf'.format(theta, suffix)), dpi=100)
 
 
 def activated_links(h_tnet: hyperTN):
@@ -699,19 +699,20 @@ def scatter_weights_topo_props_order2(h_tnet: hyperTN, theta, phi):
     #                       'weights_topo_props_order_2_one-two_hop_walks_alpha_{0:.2f}.pdf'.format(alpha)), dpi=200)
 
 def scatter_weights_topo_props_diff_order(h_tnet: hyperTN, theta):
-    beta = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    beta = [0.001, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
     ts = h_tnet.time_division(which='all')
     its = len(ts) - 1
 
     substrate = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[its]])
-    max_order = min([max([len(k) for k in substrate]), 4])
+    max_order = min([max([len(k) for k in substrate]), 3])
     # metrics = substrate
     # local_eff_metrics = local_effective_sum_metric(h_tnet)
-    local_eff_inverse_metrics = local_effective_sum_inverse_metric(h_tnet)
-    twohop_metrics = two_hop_walk_score(h_tnet)
+    # local_eff_inverse_metrics = local_effective_sum_inverse_metric(h_tnet)
+    # twohop_metrics = two_hop_walk_score(h_tnet)
     # metrics = local_effective_prod_metric(h_tnet, i=its)
     # metrics = local_cross_order_weight(h_tnet, i=its, supsub='superset')
     # metrics = local_cross_order_effective_weight(h_tnet, i=its, supsub='superset')
+    metrics = appearance_time(h_tnet, subnet=-1, which='min')
 
     links_timestamps = dict().fromkeys(substrate)
     for k in substrate:
@@ -725,23 +726,25 @@ def scatter_weights_topo_props_diff_order(h_tnet: hyperTN, theta):
         # metrics = {k: substrate[k] + bt * twohop_metrics[k] for k in substrate}
         # metrics = {k: substrate[k] + bt * local_eff_metrics[k] for k in substrate}
         # metrics = {k: substrate[k] + bt * (local_eff_metrics[k] + twohop_metrics[k]) for k in substrate}
-        metrics = local_eff_inverse_metrics
+        metrics = metrics
         backbone = h_tnet.return_backbone({'beta': bt, 'theta': theta}, subnet=its)
         for order in range(2, max_order+1):
-            data = [(np.sum(links_timestamps[k]), backbone[k], substrate[k], metrics[k]) for k in backbone if len(k) == order]
+            data = [(np.mean(links_timestamps[k]), backbone[k], substrate[k], metrics[k]) for k in backbone if len(k) == order]
             print('Order ', order, ' #datapoints: ', len(data))
             if len(data) < 5:
                 continue
-            ax[order - 2][i].scatter([e[3] for e in data], [e[1] for e in data], c=[np.log(e[2]) for e in data],
+            ax[order - 2][i].scatter([e[0] for e in data], [e[1] for e in data], c=[np.log(e[2]) for e in data],
                                      cmap='viridis', alpha=0.5)
-            r = pearsonr([e[3] for e in data], [e[1] for e in data])[0]
-            tau = kendalltau([e[3] for e in data], [e[1] for e in data])[0]
+            r = pearsonr([e[0] for e in data], [e[1] for e in data])[0]
+            tau = kendalltau([e[0] for e in data], [e[1] for e in data])[0]
             ax[order-2][i].set_title('r={0:.3f}, tau={1:.3f}'.format(r, tau), pad=0.1)
-            ax[order-2][i].set_xscale('log')
+            # ax[order-2][i].set_xscale('log')
             ax[order-2][i].set_yscale('log')
     fig.tight_layout()
+    # fig.savefig(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
+    #                       'weights_topo_props_diff_order_local_eff_plus1_inverse_only_theta_{0}_subnet{1}.pdf'.format(theta, its)), dpi=200)
     fig.savefig(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
-                          'weights_topo_props_diff_order_local_eff_plus1_inverse_only_theta_{0}_subnet{1}.pdf'.format(theta, its)), dpi=200)
+                          'weights_topo_props_meant_theta_{0}_subnet{1}.pdf'.format(theta, its)), dpi=200)
     # fig.savefig(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model',
     #                       'weights_topo_props_diff_order_linkweight_theta_{0}_subnet{1}.pdf.pdf'.format(theta, its)), dpi=200)
 
@@ -903,7 +906,7 @@ def corr_coef_backbone_metric(h_tnet: hyperTN, subnet, params: dict, order: int,
     elif corr_metric == 'spearmanr':
         return spearmanr([e[0] for e in data], [e[1] for e in data])[0]
 
-def compare_diff_metrics_corr(theta, order=3, corr_metric='kendalltau', xaxis='beta'):
+def compare_diff_metrics_corr(subnet, theta, order=3, corr_metric='kendalltau', xaxis='beta'):
     dataset_phy_contacts = ['infectious', 'primaryschool', 'highschool2012', 'highschool2013']
     # dataset_sci_collab = ['q-bio', 'q-fin', 'hep-lat', 'nucl-th']
     dataset_sci_collab = ['ht09', 'SFHH', 'workplace15', 'hospital']
@@ -927,9 +930,9 @@ def compare_diff_metrics_corr(theta, order=3, corr_metric='kendalltau', xaxis='b
         ts1 = h_tnet1.time_division(which='all')
         corr_coef1, prev1 = [], []
         for bt in beta:
-            backbone1 = h_tnet1.return_backbone(params={'beta': bt, 'theta': theta}, subnet=len(ts1)-1)
+            backbone1 = h_tnet1.return_backbone(params={'beta': bt, 'theta': theta}, subnet='T')
             prev1.append(np.sum(list(backbone1.values()))/h_tnet1.n**2)
-            corr_coef1.append([corr_coef_backbone_metric(h_tnet1, len(ts1)-1, {'beta': bt, 'theta': theta}, order=order, metric=metric, corr_metric=corr_metric) for metric in metrics])
+            corr_coef1.append([corr_coef_backbone_metric(h_tnet1, subnet, {'beta': bt, 'theta': theta}, order=order, metric=metric, corr_metric=corr_metric) for metric in metrics])
         for m in range(len(metrics)):
             if 'time_dependent' in metrics[m]:
                 ax[0][idx].plot(beta if xaxis=='beta' else prev1, [e[m] for e in corr_coef1], '-', linewidth=1, c=COLORS[m-4], label=metrics[m], alpha=0.8)
@@ -939,9 +942,9 @@ def compare_diff_metrics_corr(theta, order=3, corr_metric='kendalltau', xaxis='b
         ts2 = h_tnet2.time_division(which='all')
         corr_coef2, prev2 = [], []
         for bt in beta:
-            backbone2 = h_tnet2.return_backbone(params={'beta': bt, 'theta': theta}, subnet=len(ts2)-1)
+            backbone2 = h_tnet2.return_backbone(params={'beta': bt, 'theta': theta}, subnet='T')
             prev2.append(np.sum(list(backbone2.values()))/h_tnet2.n**2)
-            corr_coef2.append([corr_coef_backbone_metric(h_tnet2, len(ts2) - 1, {'beta': bt, 'theta': theta},
+            corr_coef2.append([corr_coef_backbone_metric(h_tnet2, subnet, {'beta': bt, 'theta': theta},
                                 order=order, metric=metric, corr_metric=corr_metric) for metric in metrics])
         for m in range(len(metrics)):
             if 'time_dependent' in metrics[m]:
@@ -979,7 +982,7 @@ def compare_diff_metrics_corr(theta, order=3, corr_metric='kendalltau', xaxis='b
                   r'$\Xi_j^{adj-all}(\alpha=1)$', r'$\Xi_j^{adj-all}(\alpha=-1)$']
     fig.legend(handles, labels, fontsize=8, frameon=False, loc='lower center', bbox_to_anchor=(0.5, 0), ncol=4, columnspacing=0.5)
     # fig.tight_layout()
-    fig.savefig(path.join(PATH_TO_FIGS, 'Metrics_evaluation_order{0}_theta{1}_{2}_all_{3}.pdf'.format(order, '{0:.1f}'.format(theta) if isinstance(theta, float) else reduce(lambda x,y: x+'o'+y, theta.split('/')), corr_metric, xaxis)), dpi=200)
+    fig.savefig(path.join(PATH_TO_FIGS, 'Metrics_evaluation_subnet{0}_order{1}_theta{2}_all_{3}.pdf'.format(subnet, order, '{0:.1f}'.format(theta) if isinstance(theta, float) else reduce(lambda x,y: x+'o'+y, theta.split('/')), xaxis)), dpi=200)
 
 def compare_diff_exponent_coef_metrics_corr(theta, order=3, corr_metric='kendalltau'):
     dataset_phy_contacts = ['infectious', 'primaryschool', 'highschool2013', 'ht09']
@@ -1028,47 +1031,6 @@ def compare_diff_exponent_coef_metrics_corr(theta, order=3, corr_metric='kendall
     fig.legend(handles, coefs+[r'$\beta$'], ncol=1, loc=(0.89, 0.42), fontsize='small')
     # fig.tight_layout()
     fig.savefig(path.join(PATH_TO_FIGS, 'Metrics_evaluation_order{0}_theta{1}_{2}_face2face_0hop_exponent_coefs.pdf'.format(order, '{0:.1f}'.format(theta) if isinstance(theta, float) else reduce(lambda x,y: x+'o'+y, theta.split('/')), corr_metric)), dpi=200)
-
-
-def compare_time_decayed_metrics_corr(theta, order=3, corr_metric='kendalltau'):
-    dataset_phy_contacts = ['infectious', 'primaryschool', 'highschool2013', 'ht09']
-    dataset_sci_collab = ['q-bio', 'q-fin', 'hep-lat', 'nucl-th']
-    metric_alpha = [0, 0.5, 1.0, 1.5, 2.0]
-    beta = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-
-    fig, ax = plt.subplots(2, 4, figsize=(len(dataset_phy_contacts) * 3.2, 2 * 2.5), sharey=True, sharex=True)
-    plt.subplots_adjust(left=0.06, right=0.87, bottom=0.11, top=0.97)
-    for idx in range(ax.shape[1]):
-        h_tnet1 = hyperTN(dataset_phy_contacts[idx])  # plot face-to-face datasets
-        ts1 = h_tnet1.time_division(which='all')
-        corr_coef1 = []
-        for bt in beta:
-            corr_coef1.append([corr_coef_backbone_metric(h_tnet1, {'beta': bt, 'theta': theta}, subnet=len(ts1)-1, order=order, metric='linkweight_timedecayed', corr_metric=corr_metric, alpha=alp) for alp in metric_alpha])
-        for m in range(len(metric_alpha)):
-            ax[0][idx].plot(beta, [e[m] for e in corr_coef1], '-', marker=MARKERS[m], c=COLORS[m], label=r'$\alpha={0}$'.format(metric_alpha[m]))
-        h_tnet2 = hyperTN(dataset_sci_collab[idx])  # plot arxiv datasets
-        ts2 = h_tnet2.time_division(which='all')
-        corr_coef2 = []
-        for bt in beta:
-            corr_coef2.append([corr_coef_backbone_metric(h_tnet2, {'beta': bt, 'theta': theta}, subnet=len(ts2) - 1,
-                                order=order, metric='linkweight_timedecayed', corr_metric=corr_metric, alpha=alp) for alp in metric_alpha])
-        for m in range(len(metric_alpha)):
-            ax[1][idx].plot(beta, [e[m] for e in corr_coef2], '-', marker=MARKERS[m], c=COLORS[m], label=r'$\alpha={0}$'.format(metric_alpha[m]))
-        ax[0][idx].plot([-0.05, 1.05], [0, 0], '--', c='grey')
-        ax[1][idx].plot([-0.05, 1.05], [0, 0], '--', c='grey')
-        ax[1][idx].set_xlabel(r'$\beta$')
-        ax[0][idx].set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
-        ax[0][idx].set_xlim([-0.05, 1.05])
-        plt.text(.97, .97, dataset_phy_contacts[idx], ha='right', va='top', transform=ax[0][idx].transAxes, fontsize='large', fontweight='bold')
-        plt.text(.97, .97, dataset_sci_collab[idx], ha='right', va='top', transform=ax[1][idx].transAxes, fontsize='large', fontweight='bold')
-    ax[0][0].set_ylim([-1.0, 1.0])
-    ax[1][0].set_ylim([-1.0, 1.0])
-    ax[0][0].set_ylabel('Kendall tau')
-    ax[1][0].set_ylabel('Kendall tau')
-    handles, labels = ax[-1][-1].get_legend_handles_labels()
-    fig.legend(handles, labels, ncol=1, loc=(0.89, 0.42), fontsize='large')
-    # fig.tight_layout()
-    fig.savefig(path.join(PATH_TO_FIGS, 'Timedecayed_Metrics_evaluation_order{0}_theta{1}_{2}.pdf'.format(order, '{0:.1f}'.format(theta) if isinstance(theta, float) else reduce(lambda x,y: x+'o'+y, theta.split('/')), corr_metric)), dpi=200)
 
 def colormap2d(h_tnet: hyperTN, subnet):
     ts = h_tnet.time_division(which='all')
@@ -1169,7 +1131,7 @@ def prevalence_comparison():
     # fig.tight_layout()
     fig.savefig(path.join(PATH_TO_FIGS, 'Fig_prevalence.pdf'), dpi=200)
 
-def compare_relative_weight(xvar='prevalence', normalize=True):
+def compare_relative_weight(xvar='beta', normalize=True):
     dataset_phy_contacts = ['infectious', 'primaryschool', 'highschool2012', 'highschool2013']
     dataset_sci_collab = ['ht09', 'SFHH', 'workplace15', 'hospital']
     beta = [0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
@@ -1189,7 +1151,8 @@ def compare_relative_weight(xvar='prevalence', normalize=True):
                 prev.append(sum([backbone[k] for k in backbone])/h_tnet1.n)
             for iod, od in enumerate(orders):
                 if xvar == 'beta':
-                    ax[0][idx].plot(beta, [weights_sum[i][iod]/(prev[i] if normalize else 1) for i in range(len(beta))], linestyle=LINESTYLES[idtt], c=COLORS[iod], clip_on=False)
+                    # ax[0][idx].plot(beta, [weights_sum[i][iod]/(prev[i] if normalize else 1) for i in range(len(beta))], linestyle=LINESTYLES[idtt], c=COLORS[iod], clip_on=False)
+                    ax[0][idx].plot(beta, [weights_sum[i][iod]/np.sum([weights_sum[i][ord-2] for ord in orders]) for i in range(len(beta))], linestyle=LINESTYLES[idtt], c=COLORS[iod], clip_on=False)
                 elif xvar =='prevalence':
                     ax[0][idx].plot([e/h_tnet1.n for e in prev], [weights_sum[i][iod] / (prev[i] if normalize else 1) for i in range(len(beta))], linestyle=LINESTYLES[idtt], c=COLORS[iod], clip_on=False)
         ax[0][idx].set_xscale('log')
@@ -1232,43 +1195,176 @@ def compare_relative_weight(xvar='prevalence', normalize=True):
     ax[1][0].set_ylim([-0.05, 1.05])
     ax[0][0].yaxis.set_tick_params(labelsize=6)
     ax[1][0].yaxis.set_tick_params(labelsize=6)
-    ax[0][0].set_ylabel('Sum of weight', fontsize=8)
-    ax[1][0].set_ylabel('Sum of weight', fontsize=8)
+    ax[0][0].set_ylabel('Normalized weight', fontsize=8)
+    ax[1][0].set_ylabel('Normalized weight', fontsize=8)
     handles, labels = ax[-1][-1].get_legend_handles_labels()
     fig.legend(handles, labels, ncol=1, loc=(0.82, 0.42), fontsize=7, frameon=False)
     # fig.tight_layout()
     fig.savefig(
-        path.join(PATH_TO_FIGS, 'Fig_order_induced_prevalence{0}__.pdf'.format('_'+xvar)),
+        path.join(PATH_TO_FIGS, 'Fig_order_induced_prevalence{0}_normalized_by_order2n3.pdf'.format('_'+xvar)),
         dpi=200)
 
-def corr_diff_theta(corr_measure_func):
+def log_ratio_weight_diff_theta(subnet):
+    eps = 1/5000
+    datasets = ['infectious', 'primaryschool', 'highschool2012', 'highschool2013', 'ht09', 'SFHH', 'workplace15', 'hospital']
+    beta = [0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    theta = ['1.0', '-1.0']
+    orders = [2, 3]
+
+    fig, ax = plt.subplots(1, 3, figsize=(7, 2.1), sharex=True)
+    ax = ax.flatten()
+    plt.subplots_adjust(left=0.11, right=0.75, bottom=0.18, top=0.92, wspace=0.4)
+    ax[0].semilogx([0.001, 1.0], [0, 0], '--', linewidth=0.8, c='grey')
+    ax[1].semilogx([0.001, 1.0], [0, 0], '--', linewidth=0.8, c='grey')
+    ax[2].semilogx([0.001, 1.0], [0, 0], '--', linewidth=0.8, c='grey')
+    ax[0].set_title('$d=2$', fontsize=8, fontweight='bold', pad=0.5)
+    ax[1].set_title('$d=3$', fontsize=8, fontweight='bold', pad=0.5)
+    ax[2].set_title('$d\geq 2$', fontsize=8, fontweight='bold', pad=0.5)
+    for d, dataset in enumerate(datasets):
+        h_tnet = hyperTN(dataset)
+        ts = h_tnet.time_division(which='all')
+        # agg_net = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[-1]])
+        log_ratio_sum = [[], [], []]
+        for bt in beta:
+            backbone1 = h_tnet.return_backbone({'beta': bt, 'theta': 1.0}, subnet=len(ts)-1)
+            backbone2 = h_tnet.return_backbone({'beta': bt, 'theta': -1.0}, subnet=len(ts)-1)
+            prev1 = np.sum([backbone1[k] for k in backbone1])
+            prev2 = np.sum([backbone2[k] for k in backbone2])
+            # log_ratio2 = np.sum([np.log10((backbone1[k])/(backbone2[k])) for k in backbone2 if len(k) == 2 and k in backbone1])
+            # log_ratio3 = np.sum([np.log10((backbone1[k])/(backbone2[k])) for k in backbone2 if len(k) == 3 and k in backbone1])
+            # log_ratio_all = np.sum([np.log10((backbone1[k])/(backbone2[k])) for k in backbone2 if k in backbone1])
+            log_ratio2 = np.sum([np.log10((backbone1[k]/prev1)/(backbone2[k]/prev2)) for k in backbone2 if len(k) == 2 and k in backbone1])
+            log_ratio3 = np.sum([np.log10((backbone1[k]/prev1)/(backbone2[k]/prev2)) for k in backbone2 if len(k) == 3 and k in backbone1])
+            log_ratio_all = np.sum([np.log10((backbone1[k]/prev1)/(backbone2[k]/prev2)) for k in backbone2 if k in backbone1])
+            log_ratio_sum[0].append(log_ratio2)
+            log_ratio_sum[1].append(log_ratio3)
+            log_ratio_sum[2].append(log_ratio_all)
+        ax[0].semilogx(beta, log_ratio_sum[0], c=COLORS[d], clip_on=False, label=dataset)
+        ax[1].semilogx(beta, log_ratio_sum[1], c=COLORS[d], clip_on=False)
+        ax[2].semilogx(beta, log_ratio_sum[2], c=COLORS[d], clip_on=False)
+    ax[0].set_xticks([0.001, 0.01, 0.1, 1.0])
+    ax[1].set_xticks([0.001, 0.01, 0.1, 1.0])
+    ax[2].set_xticks([0.001, 0.01, 0.1, 1.0])
+    ax[0].tick_params(direction='in', length=2.2, width=0.7, labelsize=6)
+    ax[1].tick_params(direction='in', length=2.2, width=0.7, labelsize=6)
+    ax[2].tick_params(direction='in', length=2.2, width=0.7, labelsize=6)
+    # ax[0].set_ylim([-0.05, 1.05])
+    # ax[1].set_ylim([-0.05, 1.05])
+    # ax[0].yaxis.set_tick_params(labelsize=6)
+    # ax[4].yaxis.set_tick_params(labelsize=6)
+    ax[0].set_xlabel(r'$\beta$')
+    ax[1].set_xlabel(r'$\beta$')
+    ax[2].set_xlabel(r'$\beta$')
+    ax[0].set_ylabel(r'$\langle\log [\widetilde{w}_j^B(\Theta=1)/\widetilde{w}_j^B(\Theta=d-1)]\rangle$', fontsize=8)
+    # ax[0].set_ylabel(r'$\langle\log [w_j^B(\Theta=1)/w_j^B(\Theta=d-1)]\rangle$', fontsize=8)
+    # ax[1].set_ylabel(r'$\langle\log [w_j^B(\Theta=1)/w_j^B(\Theta=d-1)]\rangle$', fontsize=8)
+    # ax[2].set_ylabel(r'$\langle\log [w_j^B(\Theta=1)/w_j^B(\Theta=d-1)]\rangle$', fontsize=8)
+    handles, labels = ax[0].get_legend_handles_labels()
+    fig.legend(handles, labels, ncol=1, loc=(0.78, 0.22), fontsize=7, frameon=False)
+    fig.savefig(path.join(PATH_TO_FIGS, 'sum_of_log_ratio_weight.pdf'), dpi=200)
+    # fig.savefig(path.join(PATH_TO_FIGS, 'mean_of_log_ratio_weight_normalized_by_prevalence.pdf'), dpi=200)
+
+def average_variance_scatter():
+    datasets = ['infectious', 'primaryschool', 'highschool2012', 'highschool2013', 'ht09', 'SFHH', 'workplace15',
+                'hospital']
+    beta = [0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07,
+            0.08, 0.09, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    fig, ax = plt.subplots(2, 8, figsize=(12, 3.5))
+    # plt.subplots_adjust(left=0.10, right=0.92, bottom=0.18, top=0.92, wspace=0.11, hspace=0.10)
+
+    for d, dataset in enumerate(datasets):
+        h_tnet = hyperTN(dataset)
+        ts = h_tnet.time_division(which='all')
+        agg_hnet = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:ts[-1]])
+        weight_beta_bkb1, weight_beta_bkb2 = dict.fromkeys(agg_hnet), dict.fromkeys(agg_hnet)
+        for hl in agg_hnet:
+            weight_beta_bkb1[hl] = []
+            weight_beta_bkb2[hl] = []
+        for b, bt in enumerate(beta):
+            backbone1 = h_tnet.return_backbone({'beta': bt, 'theta': 1.0}, subnet=len(ts)-1)
+            backbone2 = h_tnet.return_backbone({'beta': bt, 'theta': -1.0}, subnet=len(ts)-1)
+            prev1 = np.sum([backbone1[hl] for hl in backbone1])
+            prev2 = np.sum([backbone2[hl] for hl in backbone2])
+            for hl in agg_hnet:
+                if hl in backbone1:
+                    weight_beta_bkb1[hl].append(backbone1[hl]/prev1)  # relative weight
+                else:
+                    weight_beta_bkb1[hl].append(0)
+                if hl in backbone2:
+                    weight_beta_bkb2[hl].append(backbone2[hl]/prev1)
+                else:
+                    weight_beta_bkb2[hl].append(0)
+        datapoints1 = [[np.mean(weight_beta_bkb1[hl]), np.std(weight_beta_bkb1[hl]), len(hl)] for hl in weight_beta_bkb1]
+        datapoints2 = [[np.mean(weight_beta_bkb2[hl]), np.std(weight_beta_bkb2[hl]), len(hl)] for hl in weight_beta_bkb2]
+        ax[0][d].scatter([e[0] for e in datapoints1 if e[2] == 2], [e[1]/e[0] for e in datapoints1 if e[2] == 2], c=COLORS[0], s=5, alpha=0.5)
+        ax[0][d].scatter([e[0] for e in datapoints1 if e[2] == 3], [e[1]/e[0] for e in datapoints1 if e[2] == 3], c=COLORS[1], s=5, alpha=0.5)
+        ax[1][d].scatter([e[0] for e in datapoints2 if e[2] == 2], [e[1]/e[0] for e in datapoints2 if e[2] == 2], c=COLORS[0], s=5, alpha=0.5)
+        ax[1][d].scatter([e[0] for e in datapoints2 if e[2] == 3], [e[1]/e[0] for e in datapoints2 if e[2] == 3], c=COLORS[1], s=5, alpha=0.5)
+        ax[0][d].plot([np.mean([e[0] for e in datapoints1 if e[2] == 2])], [np.mean([e[1]/e[0] for e in datapoints1 if e[2] == 2])], 'o', markersize=7, c='navy')
+        ax[0][d].plot([np.mean([e[0] for e in datapoints1 if e[2] == 3])], [np.mean([e[1]/e[0] for e in datapoints1 if e[2] == 3])], 'o', markersize=7, c='orangered')
+        ax[1][d].plot([np.mean([e[0] for e in datapoints2 if e[2] == 2])], [np.mean([e[1]/e[0] for e in datapoints2 if e[2] == 2])], 'o', markersize=7, c='navy')
+        ax[1][d].plot([np.mean([e[0] for e in datapoints2 if e[2] == 3])], [np.mean([e[1]/e[0] for e in datapoints2 if e[2] == 3])], 'o', markersize=7, c='orangered')
+        bins_ord2 = np.geomspace(np.min([e[0] for e in datapoints1 if e[2] == 2 and e[0] != 0.0]), np.max([e[0] for e in datapoints1 if e[2] == 2]), num=26)
+        bins_ord3 = np.geomspace(np.min([e[0] for e in datapoints1 if e[2] == 3 and e[0] != 0.0]), np.max([e[0] for e in datapoints1 if e[2] == 3]), num=16)
+        bins_ord2[0] = 0
+        bins_ord3[0] = 0
+        binned_data_ord2, _, _ = binned_statistic([e[0] for e in datapoints1 if e[2] == 2], ([e[0] for e in datapoints1 if e[2] == 2], [e[1]/e[0] for e in datapoints1 if e[2] == 2]), bins=bins_ord2)
+        binned_data_ord3, _, _ = binned_statistic([e[0] for e in datapoints1 if e[2] == 3], ([e[0] for e in datapoints1 if e[2] == 3], [e[1]/e[0] for e in datapoints1 if e[2] == 3]), bins=bins_ord3)
+        ax[0][d].plot(binned_data_ord2[0], binned_data_ord2[1], '-', c='navy', alpha=1.0)
+        ax[0][d].plot(binned_data_ord3[0], binned_data_ord3[1], '-', c='orangered', alpha=1.0)
+        bins_ord2 = np.geomspace(np.min([e[0] for e in datapoints2 if e[2] == 2 and e[0] != 0.0]), np.max([e[0] for e in datapoints2 if e[2] == 2]), num=26)
+        bins_ord3 = np.geomspace(np.min([e[0] for e in datapoints2 if e[2] == 3 and e[0] != 0.0]), np.max([e[0] for e in datapoints2 if e[2] == 3]), num=16)
+        bins_ord2[0] = 0
+        bins_ord3[0] = 0
+        binned_data_ord2, _, _ = binned_statistic([e[0] for e in datapoints2 if e[2] == 2], ([e[0] for e in datapoints2 if e[2] == 2], [e[1]/e[0] for e in datapoints1 if e[2] == 2]), bins=bins_ord2)
+        binned_data_ord3, _, _ = binned_statistic([e[0] for e in datapoints2 if e[2] == 3], ([e[0] for e in datapoints2 if e[2] == 3], [e[1]/e[0] for e in datapoints1 if e[2] == 3]), bins=bins_ord3)
+        if d == 0:
+            print(binned_data_ord3)
+        ax[1][d].plot(binned_data_ord2[0], binned_data_ord2[1], '-', c='navy', alpha=1.0)
+        ax[1][d].plot(binned_data_ord3[0], binned_data_ord3[1], '-', c='orangered', alpha=1.0)
+        ax[1][d].set_xlabel('mean')
+        ax[0][d].set_title(dataset)
+        ax[0][d].tick_params(direction='in', length=2.2, width=0.7, labelsize=6)
+        ax[1][d].tick_params(direction='in', length=2.2, width=0.7, labelsize=6)
+        ax[0][d].set_xscale('log')
+        ax[1][d].set_xscale('log')
+    # ax[0][0].set_ylabel('std')
+    # ax[1][0].set_ylabel('std')
+    ax[0][0].set_ylabel('std/mean')
+    ax[1][0].set_ylabel('std/mean')
+    fig.tight_layout()
+    fig.savefig(path.join(PATH_TO_FIGS, 'Fig_relative_weight_mean_vs_variability.pdf'), dpi=200)
+
+def corr_diff_theta(corr_measure_func, subnet):
     datasets = ['infectious', 'primaryschool', 'highschool2012', 'highschool2013', 'ht09', 'SFHH', 'workplace15', 'hospital']
     beta = [0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 
     fig, ax = plt.subplots(1, 3, figsize=(5.5, 2.2), sharex=True)
-    plt.subplots_adjust(left=0.08, right=0.96, bottom=0.3, top=0.92, wspace=0.07)
+    plt.subplots_adjust(left=0.07, right=0.98, bottom=0.3, top=0.92, wspace=0.16)
     for d, dataset in enumerate(datasets):
         h_tnet = hyperTN(dataset)
-        subset, tmax = h_tnet.time_division(which='largest')
-        agg_net = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:tmax])
-        print(dataset, len(agg_net), len([1 for hl in agg_net if len(hl)==2]), len([1 for hl in agg_net if len(hl)==3]))
+        T = h_tnet.T
+        if isinstance(subnet, int):
+            T = h_tnet.time_division(which='all')[subnet]
+        agg_net = h_tnet.aggregate_hyperTN(h_tnet.hypercontacts[:T])
+        # print(dataset, len(agg_net), len([1 for hl in agg_net if len(hl)==2]), len([1 for hl in agg_net if len(hl)==3]))
         corrs, corrs1, corrs2 = [], [], []
-        backbone_beta1 = h_tnet.return_backbone({'beta': 1.0, 'theta': -1.0}, subnet=subset)
-        topN_all = len(backbone_beta1)
-        topN_pairwise = len([k for k in backbone_beta1 if len(k) == 2])
-        topN_triangle = len([k for k in backbone_beta1 if len(k) == 3])
+        # backbone_beta1 = h_tnet.return_backbone({'beta': 1.0, 'theta': -1.0}, subnet=subnet)
+        # topN_all = len(backbone_beta1)
+        # topN_pairwise = len([k for k in backbone_beta1 if len(k) == 2])
+        # topN_triangle = len([k for k in backbone_beta1 if len(k) == 3])
         for bt in beta:
-            backbone1 = h_tnet.return_backbone({'beta': bt, 'theta': 1.0}, subnet=subset)
-            backbone2 = h_tnet.return_backbone({'beta': bt, 'theta': -1.0}, subnet=subset)
+            backbone1 = h_tnet.return_backbone({'beta': bt, 'theta': 1.0}, subnet=subnet)
+            backbone2 = h_tnet.return_backbone({'beta': bt, 'theta': -1.0}, subnet=subnet)
             data = [[backbone1[hl] if hl in backbone1 else 0, backbone2[hl] if hl in backbone2 else 0] for hl in agg_net]
             data1 = [[backbone1[hl] if hl in backbone1 else 0, backbone2[hl] if hl in backbone2 else 0] for hl in agg_net if len(hl) == 2]
             data2 = [[backbone1[hl] if hl in backbone1 else 0, backbone2[hl] if hl in backbone2 else 0] for hl in agg_net if len(hl) == 3]
-            # corrs.append(corr_measure_func([e[0] for e in data], [e[1] for e in data])[0])
-            # corrs1.append(corr_measure_func([e[0] for e in data1], [e[1] for e in data1])[0])
-            # corrs2.append(corr_measure_func([e[0] for e in data2], [e[1] for e in data2])[0])
-            corrs.append(overlap_top_N([e[0] for e in data], [e[1] for e in data], topN_all))
-            corrs1.append(overlap_top_N([e[0] for e in data1], [e[1] for e in data1], topN_pairwise))
-            corrs2.append(overlap_top_N([e[0] for e in data2], [e[1] for e in data2], topN_triangle))
+            corrs.append(corr_measure_func([e[0] for e in data], [e[1] for e in data])[0])
+            corrs1.append(corr_measure_func([e[0] for e in data1], [e[1] for e in data1])[0])
+            corrs2.append(corr_measure_func([e[0] for e in data2], [e[1] for e in data2])[0])
+            # corrs.append(overlap_top_N([e[0] for e in data], [e[1] for e in data], topN_all))
+            # corrs1.append(overlap_top_N([e[0] for e in data1], [e[1] for e in data1], topN_pairwise))
+            # corrs2.append(overlap_top_N([e[0] for e in data2], [e[1] for e in data2], topN_triangle))
         ax[0].plot(beta, corrs, '-', label=dataset)
         ax[1].plot(beta, corrs1, '-')
         ax[2].plot(beta, corrs2, '-')
@@ -1277,7 +1373,7 @@ def corr_diff_theta(corr_measure_func):
     ax[2].set_xscale('log')
     ax[0].set_title('Order $d\geq 2$', fontsize=8, pad=0.8)
     ax[1].set_title('Order $d=2$', fontsize=8, pad=0.8)
-    ax[2].set_title('Order $d\geq3$', fontsize=8, pad=0.8)
+    ax[2].set_title('Order $d=3$', fontsize=8, pad=0.8)
     ax[0].set_xticks([0.001, 0.01, 0.1, 1.0])
     ax[1].set_xticks([0.001, 0.01, 0.1, 1.0])
     ax[2].set_xticks([0.001, 0.01, 0.1, 1.0])
@@ -1293,120 +1389,16 @@ def corr_diff_theta(corr_measure_func):
     ax[0].set_xlabel(r'$\beta$', fontsize=8, labelpad=0.8)
     ax[1].set_xlabel(r'$\beta$', fontsize=8, labelpad=0.8)
     ax[2].set_xlabel(r'$\beta$', fontsize=8, labelpad=0.8)
-    # ax[0].set_ylabel(r'Kendall correlation', fontsize=8)
+    ax[0].set_ylabel(r'Kendall correlation', fontsize=8)
     # ax[0].set_ylabel(r'Spearman r', fontsize=8)
-    ax[0].set_ylabel(r'Overlap')
+    # ax[0].set_ylabel(r'Overlap')
     ax[0].set_ylim([0, 1.05])
+    ax[1].set_ylim([0.6, 1.02])
+    ax[2].set_ylim([0, 1.05])
     fig.legend(frameon=False, ncols=4, loc='lower center', bbox_to_anchor=(0.5, 0.01), borderpad=0.05, columnspacing=0.5, fontsize=7)
     # fig.tight_layout()
-    # fig.savefig(path.join(PATH_TO_FIGS, 'Fig_weight_corr_spearmanr__.pdf'), dpi=200)
-    fig.savefig(path.join(PATH_TO_FIGS, 'Overlap_diff_theta.pdf'), dpi=200)
-
-def netsci_fig():
-    datasets = ['infectious', 'primaryschool', 'highschool2012', 'highschool2013', 'ht09', 'SFHH', 'workplace15', 'hospital']
-    beta = [0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07,
-            0.08, 0.09, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-
-    fig, ax = plt.subplots(1, 3, figsize=(7, 2.5))
-    # for d, ds in enumerate(datasets):
-    #     h_tnet = hyperTN(ds)
-    #     ts = h_tnet.time_division(which='all')
-    #     res_path = path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model')
-    #     prevalence_diff, prevalence_theta_1, prevalence_theta_h_1 = [], [], []
-    #     for b, bt in enumerate(beta):
-    #         prevalence1 = np.load(path.join(res_path, 'beta1_{0:.3f}-beta2_{0:.3f}-theta_{1:.1f}'.format(bt, 1.0),
-    #                                         'T_0.{0}-prevalence_averaged.npy'.format(len(ts))))
-    #         prevalence2 = np.load(path.join(res_path, 'beta1_{0:.3f}-beta2_{0:.3f}-theta_{1:.1f}'.format(bt, -1.0),
-    #                                         'T_0.{0}-prevalence_averaged.npy'.format(len(ts))))
-    #         prevalence_diff.append((prevalence1[-1] - prevalence2[-1]) / prevalence1[-1])
-    #         prevalence_theta_1.append(prevalence1[-1] / h_tnet.n)
-    #         prevalence_theta_h_1.append(prevalence2[-1] / h_tnet.n)
-    #     ydata = prevalence_diff
-    #     ax[0][0].plot(beta, ydata, c=COLORS[d], clip_on=False)
-    # ax[0][0].tick_params(direction='in', length=2.2, width=0.7)
-    # ax[0][0].set_ylim([-0.05, 0.7])
-    # ax[0][0].set_xscale('log')
-    # ax[0][0].set_xlabel(r'$\beta$')
-    # ax[0][0].set_ylabel(r'$\frac{\rho(\Theta=1)-\rho(\Theta=d-1)}{\rho(\Theta=1)}$')
-
-    h_tnet1 = hyperTN(datasets[5])  # plot face-to-face datasets
-    ts1 = h_tnet1.time_division(which='all')
-    for idtt, tt in enumerate([1.0, -1.0]):
-        weights_sum, prev = [], []
-        for bt in beta:
-            backbone = h_tnet1.return_backbone({'beta': bt, 'theta': tt}, subnet=len(ts1) - 1)
-            weights_sum.append([sum([backbone[k] for k in backbone if len(k) == od]) / h_tnet1.n for od in [2, 3]])
-            prev.append(sum([backbone[k] for k in backbone]) / h_tnet1.n)
-        for iod, od in enumerate([2, 3]):
-            ax[0].plot(beta, [weights_sum[i][iod] / prev[i] for i in range(len(beta))],
-                            linestyle=LINESTYLES[idtt], c=COLORS[iod], clip_on=False)
-    ax[0].set_xscale('log')
-    ax[0].tick_params(direction='in', length=2.2, width=0.7)
-    ax[0].set_xlabel(r'$\beta$', fontsize=9)
-    ax[0].set_ylabel(r'$\rho_d$', fontsize=9)
-    ax[0].xaxis.set_tick_params(labelsize=6)
-    ax[0].yaxis.set_tick_params(labelsize=6)
-
-    metrics = ['linkweight', 'time_independent_link_local_metric_subplink_alpha1.0',
-               'time_independent_link_local_metric_subplink_alpha-1.0',
-               'time_independent_link_local_metric_adjplink_alpha1.0',
-               'time_independent_link_local_metric_adjplink_alpha-1.0']
-    metrics = metrics + ['time_dependent_link_local_metric_subplink_alpha1.0',
-                         'time_dependent_link_local_metric_subplink_alpha-1.0',
-                         'time_dependent_link_local_metric_adjplink_alpha1.0',
-                         'time_dependent_link_local_metric_adjplink_alpha-1.0']
-    corrs = []
-    for itt, theta in enumerate([1.0, -1.0]):
-        corr_coef = []
-        for bt in beta:
-            backbone1 = h_tnet1.return_backbone(params={'beta': bt, 'theta': theta}, subnet=len(ts1) - 1)
-            corr_coef.append([corr_coef_backbone_metric(h_tnet1, {'beta': bt, 'theta': theta}, subnet=len(ts1) - 1,
-                                                     order=3, metric=metric, corr_metric='kendalltau', coef=bt)
-                           for metric in metrics])
-        corrs.append(corr_coef)
-    for m in range(len(metrics)):
-        if 'time_dependent' in metrics[m]:
-            ax[1].plot(beta, [e[m] for e in corrs[0]], '-', linewidth=1,
-                            c=COLORS[m - 4], label=metrics[m], alpha=0.8)
-            ax[2].plot(beta, [e[m] for e in corrs[1]], '-', linewidth=1,
-                            c=COLORS[m - 4], label=metrics[m], alpha=0.8)
-        else:
-            ax[1].plot(beta, [e[m] for e in corrs[0]], ':', linewidth=1.4,
-                            c=COLORS[m], label=metrics[m], alpha=0.8)
-            ax[2].plot(beta, [e[m] for e in corrs[1]], ':', linewidth=1.4,
-                            c=COLORS[m], label=metrics[m], alpha=0.8)
-
-    ax[1].plot([0.0008, 1.1], [0, 0], '--', linewidth=0.6, c='grey')
-    ax[2].plot([0.0008, 1.1], [0, 0], '--', linewidth=0.6, c='grey')
-    ax[1].set_xlabel(r'$\beta$', fontsize=9)
-    ax[2].set_xlabel(r'$\beta$', fontsize=9)
-    ax[1].xaxis.set_tick_params(labelsize=6)
-    ax[2].xaxis.set_tick_params(labelsize=6)
-    ax[1].tick_params(direction='in', length=2.2, width=0.7)
-    ax[2].tick_params(direction='in', length=2.2, width=0.7)
-    ax[1].set_xscale('log')
-    ax[2].set_xscale('log')
-    ax[1].set_ylim([-1.0, 1.0])
-    ax[2].set_ylim([-1.0, 1.0])
-    ax[1].set_ylabel(r'Kendall tau', fontsize=9)
-    ax[2].set_ylabel(r'Kendall tau', fontsize=9)
-    ax[1].set_yticks([-1, -0.5, 0, 0.5, 1.0], ['$-1.0$', '$-0.5$', '$0.0$', '$0.5$', '$1.0$'], fontsize=6)
-    ax[2].set_yticks([-1, -0.5, 0, 0.5, 1.0], ['$-1.0$', '$-0.5$', '$0.0$', '$0.5$', '$1.0$'], fontsize=6)
-    # handles, labels = ax[-1][-1].get_legend_handles_labels()
-    # labels = [r'$w_j$', r'$\xi_j^{sub-pairwise}(\alpha=1)$', r'$\xi_j^{sub-pairwise}(\alpha=-1)$',
-    #           r'$\xi_j^{adj-pairwise}(\alpha=1)$',
-    #           r'$\xi_j^{adj-pairwise}(\alpha=-1)$',
-    #           r'$\Xi_j^{sub-pairwise}(\alpha=1)$', r'$\Xi_j^{sub-pairwise}(\alpha=-1)$',
-    #           r'$\Xi_j^{adj-pairwise}(\alpha=1)$',
-    #           r'$\Xi_j^{adj-pairwise}(\alpha=-1)$']
-    # fig.legend(handles, labels, fontsize=8, frameon=False, loc='lower center', bbox_to_anchor=(0.5, 0), ncol=4,
-    #            columnspacing=0.5)
-
-    ax[0].text(.97, .97, '(A)', ha='right', va='top', transform=ax[0].transAxes, fontsize='medium', fontweight='bold')
-    ax[1].text(.97, .97, '(B)', ha='right', va='top', transform=ax[1].transAxes, fontsize='medium', fontweight='bold')
-    ax[2].text(.97, .97, '(C)', ha='right', va='top', transform=ax[2].transAxes, fontsize='medium', fontweight='bold')
-    fig.tight_layout()
-    fig.savefig(path.join(PATH_TO_FIGS, 'NetSci2024_.pdf'), dpi=200)
+    fig.savefig(path.join(PATH_TO_FIGS, 'Fig_weight_corr_diff_theta_subnet{0}.pdf'.format(subnet)), dpi=200)
+    # fig.savefig(path.join(PATH_TO_FIGS, 'Overlap_diff_theta.pdf'), dpi=200)
 
 def jaccard_similarity_backbone(bkb1, bkb2):
     # the jaccard similarity between two backbones
@@ -1440,9 +1432,9 @@ def similarity_diff_theta():
             similarity[0].append(all_sim)
             similarity[1].append(plink_sim)
             similarity[2].append(tlink_sim)
-        ax[d].semilogx(beta, similarity[0], '-', c='k')
-        ax[d].semilogx(beta, similarity[1], '-', c=COLORS[0])
-        ax[d].semilogx(beta, similarity[2], '-', c=COLORS[1])
+        ax[d].semilogx(beta, similarity[0], '-', c='k', label='All')
+        ax[d].semilogx(beta, similarity[1], '-', c=COLORS[0], label='$d=2$')
+        ax[d].semilogx(beta, similarity[2], '-', c=COLORS[1], label='$d=3$')
         if d > 3:
             ax[d].set_xticks([0.001, 0.01, 0.1, 1.0])
             ax[d].set_xlabel(r'$\beta$', fontsize=8, labelpad=0.5)
@@ -1455,6 +1447,8 @@ def similarity_diff_theta():
     ax[4].yaxis.set_tick_params(labelsize=6)
     ax[0].set_ylabel('Jaccard similarity', fontsize=8)
     ax[4].set_ylabel('Jaccard similarity', fontsize=8)
+    handles, labels = ax[0].get_legend_handles_labels()
+    fig.legend(handles, labels, ncol=1, loc=(0.82, 0.42), fontsize=7, frameon=False)
     fig.savefig(path.join(PATH_TO_FIGS, 'Jaccard_similarity.pdf'), dpi=200)
 
 if __name__ == '__main__':
@@ -1462,7 +1456,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', type=str, default='infectious', help='dataset')
     parser.add_argument('--order', type=int, default=3, help='which order')
     parser.add_argument('--beta', type=float, default=0.25, help='infectivity for pairwise interaction')
-    parser.add_argument('--theta', type=str, default='1/2',
+    parser.add_argument('--theta', type=str, default='1.0',
                         help='threshold for contagion to occur in hyperlink interaction')
     parser.add_argument('--R', type=int, default=100, help='the number of realizations in total')
     parser.add_argument('--n_arrays', type=int, default=10, help='the number of job arrays in slurm')
@@ -1474,14 +1468,14 @@ if __name__ == '__main__':
     # plot_prevalence(h_tnet)
     # prevalence_diff(xaxis='beta', yaxis='')
     # average_shuffled_outputs(args.dataset, args.beta, num_r=100, num_s=10, theta=args.theta)
-    # integrate_backbones(h_tnet, beta=args.beta, theta=args.theta, num_r=5000)
+    # integrate_backbones(h_tnet, subnet='T', beta=args.beta, theta=args.theta, num_r=5000)
     # backbone_vs_substrate(h_tnet)
     # all_datasets_backbone_vs_substrate(['infectious', 'ht09', 'highschool2013', 'primaryschool'], 1)
     # plot_backbone_comparison(h_tnet, order=4, theta=args.theta)  # the recall or weight distance as a function of beta
     # compare_diff_threshold_beta_1(h_tnet)
     # scatter_weights4subnets(h_tnet, theta=args.theta, ranking=False)
     # distance_weights4subnets(theta=args.theta)
-    # scatter_weights_diff_thresholds(h_tnet, theta=args.theta, order=3, normalization=False, ranking=False)
+    # scatter_weights_diff_thresholds(h_tnet, theta=args.theta, normalization=False, ranking=False)
     # compare_backbone_diff_t_heatmap(h_tnet, top_n=1000, theta=args.theta)
     # scatter_weights_topo_props(h_tnet, 0, metric='inverse weights', order=3)
     # for alpha in [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]:
@@ -1492,13 +1486,15 @@ if __name__ == '__main__':
     # ratio_of_links_activated(h_tnet)
     # check_low_weight(h_tnet, args.beta)
     # check_2d(h_tnet)
-    # compare_diff_metrics_corr(order=args.order, theta=args.theta, corr_metric='kendalltau', xaxis='beta')
+    # compare_diff_metrics_corr(subnet=-1, order=args.order, theta=args.theta, corr_metric='kendalltau', xaxis='beta')
     # compare_diff_exponent_coef_metrics_corr(theta=args.theta, order=3, corr_metric='kendalltau')
     # compare_time_decayed_metrics_corr(order=3, theta=args.theta, corr_metric='kendalltau')
     # compare_relative_weight(xvar='beta', normalize=True)
     # colormap2d(h_tnet, h_tnet.time_division(which='largest')[0])
-    corr_diff_theta(spearmanr)
+    # corr_diff_theta(kendalltau, subnet='T')
     # distribution_log_ratio_weights(h_tnet, order=3)
     # prevalence_comparison()
     # netsci_fig()
     # similarity_diff_theta()
+    # log_ratio_weight_diff_theta(subnet=-1)
+    # average_variance_scatter()
