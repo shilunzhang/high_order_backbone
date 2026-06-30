@@ -2,171 +2,67 @@ import os
 from collections import Counter
 from joblib import Parallel, delayed
 import pickle
-import numpy as np
 import argparse
-from fractions import Fraction
-from functools import reduce
-from TNet import *
-from hyperTNet import hyperTN
+import numpy as np
+import config
+from config import PATH_TO_RESULTS
+from hyperTNet import HyperTN
 
-def identify_time_periods(h_tnet: hyperTN, save_res=True):
-    if not path.exists(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model_v2', 'beta1_1.000-beta2_1.000-theta_1.0', 'prevalence2d.txt')):
-        prevalence = np.load(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model_v2', 'beta1_1.000-beta2_1.000-theta_1.0', 'prevalence1d.npy'))
-    else:
-        prevalence = np.loadtxt(
-            path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model_v2', 'beta1_1.000-beta2_1.000-theta_1.0',
-                      'prevalence2d.txt'), delimiter='\t', dtype=np.float64).mean(axis=1)
-    max_prevalence = np.max(prevalence)
-    thresholds = [0.3, 0.6, 0.9]
-    t_thresholds = -np.ones(len(thresholds), dtype=np.int32)
-    i = 0
-    for t, p in enumerate(prevalence):
-        if p >= thresholds[i] * max_prevalence:
-            # print(t, p)
-            t_thresholds[i] = t+1
-            i += 1
-        if i >= len(thresholds):
-            break
 
-    print(np.array(thresholds) * max_prevalence)
-    print([prevalence[t-1] for t in t_thresholds])
+def backbone_many_betas_multiple_runs(h_tnet: HyperTN, theta, beta_list):
+    T = 1421  # for subnet T_0.9
 
-    if save_res:
-        with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 't_division.json'), 'w') as f:
-            f.write(json.dumps(t_thresholds[t_thresholds>0].tolist()))
-    return t_thresholds[t_thresholds>0]
-
-def identify_time_periods_v1(h_tnet: hyperTN, save_res=True):
-    if not path.exists(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model_v2', 'beta1_1.000-beta2_1.000-theta_1.0', 'prevalence2d.txt')):
-        prevalence = np.load(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model_v2', 'beta1_1.000-beta2_1.000-theta_1.0', 'prevalence1d.npy'))
-    else:
-        prevalence = np.loadtxt(
-            path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model_v2', 'beta1_1.000-beta2_1.000-theta_1.0',
-                      'prevalence2d.txt'), delimiter='\t', dtype=np.float64).mean(axis=1)
-    thresholds = np.linspace(0.1, 1, 10) * h_tnet.n
-    t_thresholds = -np.ones(len(thresholds), dtype=np.int32)
-    i = 0
-    for t, p in enumerate(prevalence):
-        if p >= thresholds[i]:
-            # print(t, p)
-            t_thresholds[i] = t+1
-            i += 1
-        if i >= len(thresholds):
-            break
-
-    if save_res:
-        with open(path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model_v2', 't_division.json'), 'w') as f:
-            f.write(json.dumps(t_thresholds[t_thresholds>0].tolist()))
-    return t_thresholds[t_thresholds>0]
-
-def spread_one_pass(h_tnet: hyperTN, params, rid=0, model='threshold_model'):
-    res_path = path.join(PATH_TO_RESULTS, h_tnet.dataname, model,
-                         'beta1_{0:.3f}-beta2_{1:.3f}-theta_{2}'.format(params['beta1'], params['beta2'],
-                                                                          reduce(lambda x,y: x+'o'+y, params['theta'].split('/'))))
-    if not path.exists(res_path):
-        os.mkdir(res_path)
-    prevalence = np.zeros((len(h_tnet.hypercontacts), h_tnet.n), dtype=np.float64)
-    backbones = Counter()
-    for node in range(h_tnet.n):
-        print('Seeds: ', node)
-        diffusion_tree_links, prev = h_tnet.threshold_model(seedset=frozenset({node}), params=params, T=h_tnet.T)
-        prevalence[:, node] = prev
-        backbones.update(diffusion_tree_links)
-
-    suffix = '-r{0}'.format(rid)
-    suffix_bool = True
-    if params['beta1'] == 1.0 and params['beta2'] == 1.0:
-        suffix_bool = False
-    np.save(path.join(res_path, 'prevalence1d{0}.npy'.format(suffix if suffix_bool else '')), prevalence.mean(axis=1))
-    with open(path.join(res_path, 'backbone{0}.pkl'.format(suffix)), 'wb') as f:
-        pickle.dump(backbones, f)
-
-def spread_all_subnets(h_tnet: hyperTN, params, rid=0, model='threshold_model'):
-    res_path = path.join(PATH_TO_RESULTS, h_tnet.dataname, model,
-                         'beta1_{0:.3f}-beta2_{1:.3f}-theta_{2}'.format(params['beta1'], params['beta2'],
-                                                                          reduce(lambda x,y: x+'o'+y, params['theta'].split('/'))))
-    if not path.exists(res_path):
-        os.mkdir(res_path)
-
-    suffix = '-r{0}'.format(rid)
-    Ts = h_tnet.time_division(which='all')
-
-    for i, T in list(enumerate(Ts))[::-1]:
-        print(i, T)
-        # if path.exists(path.join(res_path, 'T_0.{0}-backbone{1}.pkl'.format(i+1, suffix))):
-        #     print(path.join(res_path, 'T_0.{0}-backbone{1}.pkl'.format(i+1, suffix)), ' EXISTS..')
-        #     continue
+    prevalence_diff_beta = []
+    for beta in beta_list:
+        params = {'beta': beta, 'theta': theta}
+        # backbone = Counter()
         prevalence = np.zeros((T, h_tnet.n), dtype=np.float64)
-        backbones = Counter()
         for node in range(h_tnet.n):
-            diffusion_tree_links, prev = h_tnet.threshold_model(seedset=frozenset({node}), params=params, T=T)
+            diffusion_tree_links, prev = h_tnet.simulate_threshold_model(seedset=frozenset({node}), params=params, T=T)
+            # backbone.update(diffusion_tree_links)
             prevalence[:, node] = prev
-            backbones.update(diffusion_tree_links)
+            
+        # backbone_list.append(backbone)
+        prevalence_diff_beta.append(prevalence.mean(axis=1, keepdims=True))
 
-        # np.savetxt(path.join(res_path, 'T_0.{0}-prevalence2d{1}.txt'.format(i+1, suffix)), prevalence, fmt='%6.1f', delimiter='\t')
-        # np.savetxt(path.join(res_path, 'T_0.{0}-prevalence1d{1}.txt'.format(i+1, suffix)), prevalence.mean(axis=1), fmt='%6.1f', delimiter='\t')
-        np.save(path.join(res_path, 'T_0.{0}-prevalence1d{1}.npy'.format(3*(i+1), suffix)), prevalence.mean(axis=1))
-        with open(path.join(res_path, 'T_0.{0}-backbone{1}.pkl'.format(3*(i+1), suffix)), 'wb') as f:
-            pickle.dump(backbones, f)
+    return np.hstack(prevalence_diff_beta)
 
-def spread_whole_period(h_tnet: hyperTN, params, rid=0, model='threshold_model'):
-    res_path = path.join(PATH_TO_RESULTS, h_tnet.dataname, model,
-                         'beta1_{0:.3f}-beta2_{1:.3f}-theta_{2}'.format(params['beta1'], params['beta2'],
-                                                                          reduce(lambda x,y: x+'o'+y, params['theta'].split('/'))))
-    if not path.exists(res_path):
-        os.mkdir(res_path)
+def parallel_run_many_betas(h_tnet, theta, beta_list, n_tasks_per_array, array_id):
+    prevalence_list = Parallel(n_jobs=n_tasks_per_array, backend='loky')(delayed(backbone_many_betas_multiple_runs)(h_tnet, theta, beta_list) for r in range((array_id-1)*n_tasks_per_array+1, array_id*n_tasks_per_array+1))
 
-    suffix = '-r{0}'.format(rid)
-    T = h_tnet.T
-    print('Period: ', T)
-    if path.exists(path.join(res_path, 'T-backbone{0}.pkl'.format(suffix))):
-        print(path.join(res_path, 'T-backbone{0}.pkl'.format(suffix)), ' EXISTS..')
-        return
+    for idx, beta in enumerate(beta_list):
+        res_path = os.path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 'beta_{0:.3f}-theta_{1}'.format(beta, theta))
+        os.makedirs(res_path, exist_ok=True)
 
-    prevalence = np.zeros((T, h_tnet.n), dtype=np.float64)
-    backbones = Counter()
-    for node in range(h_tnet.n):
-        diffusion_tree_links, prev = h_tnet.threshold_model(seedset=frozenset({node}), params=params, T=T)
-        prevalence[:, node] = prev
-        backbones.update(diffusion_tree_links)
+        np.save(os.path.join(res_path, f'T_0.9-prevalence-R{array_id}.npy'), np.mean(np.vstack([prev_diff_beta[:, idx] for prev_diff_beta in prevalence_list]), axis=0))
 
-    # np.savetxt(path.join(res_path, 'T_0.{0}-prevalence2d{1}.txt'.format(i+1, suffix)), prevalence, fmt='%6.1f', delimiter='\t')
-    # np.savetxt(path.join(res_path, 'T_0.{0}-prevalence1d{1}.txt'.format(i+1, suffix)), prevalence.mean(axis=1), fmt='%6.1f', delimiter='\t')
-    np.save(path.join(res_path, 'T-prevalence1d{0}.npy'.format(suffix)), prevalence.mean(axis=1))
-    with open(path.join(res_path, 'T-backbone{0}.pkl'.format(suffix)), 'wb') as f:
-        pickle.dump(backbones, f)
+def average_prevalence(h_tnet: HyperTN, beta_list, theta):
+    for beta in beta_list:
+        res_path_beta = os.path.join(PATH_TO_RESULTS, h_tnet.dataname, 'threshold_model', 'beta_{0:.3f}-theta_{1}'.format(beta, theta))
 
-def parallel_run(h_tnet: hyperTN, model, params, n_tasks_per_array, array_id):
-    res_path = path.join(PATH_TO_RESULTS, h_tnet.dataname, model, 'beta1_{0:.3f}-beta2_{1:.3f}-theta_{2}'.format(params['beta1'], params['beta2'], reduce(lambda x,y: x+'o'+y, params['theta'].split('/'))))
-    if not path.exists(res_path):
-        try:
-            os.mkdir(res_path)
-        except:
-            print('Path already exists. ({0})'.format(path.exists(res_path)))
+        if os.path.exists(os.path.join(res_path_beta, 'T_0.9-prevalence-1000.npy')):
+            return 0
+        else:
+            prevalence = np.load(os.path.join(res_path_beta, 'T_0.9-prevalence-R1.npy'))
+            for i in range(2, 100):
+                prev = np.load(os.path.join(res_path_beta, f'T_0.9-prevalence-R{i}.npy'))
+                prevalence = prevalence + prev
 
-    print('beta: ', params['beta1'], ' theta: ', params['theta'])
-    Parallel(n_jobs=n_tasks_per_array, backend='loky')(delayed(spread_all_subnets)(h_tnet, params, r, model) for r in range((array_id-1)*n_tasks_per_array+1, array_id*n_tasks_per_array+1))
-    # Parallel(n_jobs=n_tasks_per_array, backend='loky')(delayed(spread_whole_period)(h_tnet, params, r, model) for r in range((array_id-1)*n_tasks_per_array+1, array_id*n_tasks_per_array+1))
-
+            prevalence = prevalence / 100
+            np.save(os.path.join(res_path_beta, 'T_0.9-prevalence-1000.npy'), prevalence)
+            return 1
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Contation process on temporal higher-order networks')
-    parser.add_argument('--dataset', type=str, default='infectious', help='dataset')
-    parser.add_argument('--beta1', type=float, default=0.25, help='infectivity for pairwise interaction')
-    parser.add_argument('--beta2', type=float, default=1.0, help='infectivity for hyperlink interaction')
-    parser.add_argument('--theta', type=str, default=2, help='threshold for contagion to occur in hyperlink interaction')
-    parser.add_argument('--R', type=int, default=100, help='the number of realizations in total')
-    # parser.add_argument('--sid', type=int, default=1, help='the starting id of the realization')
-    parser.add_argument('--n_arrays', type=int, default=10, help='the number of job arrays in slurm')
+    parser.add_argument('--dataset', type=str, default='SFHH', help='dataset')
+    parser.add_argument('--theta', type=str, default='d-1', help='threshold for contagion to occur in hyperlink interaction')
+    parser.add_argument('--R', type=int, default=10, help='the number of realizations in total')
+    parser.add_argument('--n_arrays', type=int, default=1, help='the number of job arrays in slurm')
     parser.add_argument('--array_id', type=int, default=1, help='ID of job arrays in slurm')
-    # parser.add_argument('--shuffled_r', type=int, default=0, help='ID of shuffled network')
     args = parser.parse_args()
-    # tnet = TN(args.dataset)
-    h_tnet = hyperTN(args.dataset)
 
-    # identify_time_periods(h_tnet)
-    # spread_one_pass(h_tnet, {'beta1': args.beta1, 'beta2': args.beta2, 'theta': args.theta})
-    if args.beta1 <= 1.0 or args.beta2 <= 1.0:
-        parallel_run(h_tnet, 'threshold_model', {'beta1': args.beta1, 'beta2': args.beta2, 'theta': args.theta}, args.R//args.n_arrays, args.array_id)
-    else:
-        spread_all_subnets(h_tnet, {'beta1': args.beta1, 'beta2': args.beta2, 'theta': args.theta})
+    h_tnet = HyperTN(args.dataset)
+
+    beta_list = [0.001, 0.002, 0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    parallel_run_many_betas(h_tnet, args.theta, beta_list, n_tasks_per_array=args.R//args.n_arrays, array_id=args.array_id)
+    # average_prevalence(h_tnet, beta_list, args.theta)  

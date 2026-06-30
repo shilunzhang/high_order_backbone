@@ -3,44 +3,37 @@ from random import sample
 import numpy as np
 import json
 from collections import Counter
-from functools import reduce
-from fractions import Fraction
-import matplotlib.pyplot as plt
-from TNet import *
-from utils import *
+from config import PATH_TO_RESULTS, PATH_TO_NETWORK_FILE
+# from utils import *
 
 
-class hyperTN:
+class HyperTN:
     def __init__(self, dataname):
-        if dataname in {'infectious', 'primaryschool', 'highschool2013', 'ht09', 'SFHH', 'workplace13', 'workplace15', 'malawi', 'hospital', 'highschool2012'}:
-            self.datatype = 'phy-contact'
-        elif dataname in {'q-bio', 'q-fin', 'quant-ph', 'nucl-th', 'hep-lat'}:
-            self.datatype = 'sci-collaboration'
-        else:
-            print('dataset does not exist..')
         self.dataname = dataname
-        self.hypercontacts = self.hypercontacts_from_txt(path.join(PATH_TO_RESULTS, self.dataname, 'hyperlinks', self.dataname + '_hypergraph.dat'))
-        minid, maxid = 1e8, 0
+        self.hypercontacts = self._hypercontacts_from_txt(os.path.join(PATH_TO_NETWORK_FILE, self.dataname + '_hypergraph.dat'))
+        node_set = set()
         for contacts in self.hypercontacts:
             for contact in contacts:
-                minid_contact, maxid_contact = min(contact), max(contact)
-                if maxid_contact > maxid:
-                    maxid = maxid_contact
-                if minid_contact < minid:
-                    minid = minid_contact
-        assert minid == 0
+                node_set.update(contact)
+        minid, maxid = min(node_set), max(node_set)
+        assert minid == 0 and maxid == len(node_set) - 1
         self.n = maxid + 1
         self.T = len(self.hypercontacts)
 
-        self.print_info()
+        self._print_info()
 
-    def print_info(self):
+    def _print_info(self):
         n_events = sum([len(e) for e in self.hypercontacts])
         print(f'---- Temporal hypergraph information ----\n'
-              f'Name: {self.dataname}\n#nodes: {self.n}\t#hyperlinks: {len(self.aggregate_hyperTN(self.hypercontacts))}\t#hyperevents: {n_events}\ttime span: [0, {self.T}]\n'
+              f'Name: {self.dataname}\n#nodes: {self.n}\t#hyperlinks: {len(self.aggregate(self.hypercontacts))}\t#hyperevents: {n_events}\ttime span: [0, {self.T}]\n'
               f'-------------------------------------')
 
-    def hypercontacts_from_txt(self, fpath: str) -> list:
+    def _hypercontacts_from_txt(self, fpath: str) -> list:
+        '''
+        Load hypercontacts from txt file.
+        :param fpath: file path to load the hypercontacts.
+        :return: list of hypercontacts, each element is a list of hypercontacts occured at a specific timestamp.
+        '''
         hyperlinks = []
         with open(fpath, 'r') as f:
             line = f.readline()
@@ -51,7 +44,16 @@ class hyperTN:
 
         return hyperlinks
 
-    def aggregate_hyperTN(self, hcontacts: list) -> Counter:
+    def hypercontacts2txt(self, fpath):
+        '''
+        Save hypercontacts into txt file.
+        :param fpath: file path to save the hypercontacts.
+        '''
+        with open(fpath+'/{0}'.format(self.dataname+'_hypergraph.dat'), 'a') as f:
+            for hypercontacts_one_snapshot in self.hypercontacts:
+                f.write(json.dumps([list(e) for e in hypercontacts_one_snapshot])+'\n')
+
+    def aggregate(self, hcontacts: list) -> Counter:
         '''
         Aggregate temporal hypergraph along time axis.
         :param hypercontacts: each element is a list of hypercontacts occured at a specific timestamp.
@@ -64,403 +66,89 @@ class hyperTN:
 
         return cnt
 
-    def time_division(self, which):
+    def simulate_threshold_model(self, seedset: frozenset, params: dict, T):
         '''
-        the division into subnets according to the prevalence, i.e., 30%, 60%, 90% of the maximum prevalence it reaches in case of \beta==1.0 and \Theta==1.
-        :return:
+        The threshold model on temporal hypergraphs. Adapted from ref. Social contagion models on hypergraphs. Guilherme et al. Phys. Rev. Res., 2(2):023032, 2020
+        For a hyper-contact with size 2, the directed infection occurs between the susceptible node and its infectious neighbor, beta1
+        For a hyper-contact with size > 2: when the number of infectious nodes in the hyper-edge is greater than theta * N,
+        each susceptible node within it has a prob. beta2 to be infected.
+        :param seedset: the seed node (or set in a more general case) to initiate the process.
+        :param params: model parameters, including 'beta1', 'beta2', and 'theta'.
+        :param T: total time steps.
+        :return: backbone and prevalence
         '''
-        with open(path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model', 't_division.json'), 'r') as f:
-            ts = json.loads(f.read().rstrip('\n'))
+        beta, theta = [params[k] for k in ['beta', 'theta']]
+        assert theta == '1' or theta == 'd-1'
 
-        if which == 'all':
-            return ts
-        elif which == 'largest':
-            return len(ts) - 1, ts[-1]
-        else:
-            print('which mode?')
+        infected_now = set(seedset)  # infected nodes at the current timestamp
+        new_infected_t = set()  # newly infected nodes during current timestamp
+        n_infected = np.zeros(T, dtype=np.int32)  # prevalence as a function of t.
+        new_infected_hlinks = dict()  # newly infected nodes (keys) and the links (values) used for infections.
+        diffusion_links = Counter()  # a list of links upon which the diffusion occurred.
+        for t, hlinks in enumerate(self.hypercontacts):  # at time t in [0, T) , iterate all hlinks.
+            if t >= T:
+                break
+            for hlink in hlinks:
+                infected_nodes = infected_now.intersection(hlink)  # infected nodes at the timestamp before t
+                threshold = 1 if theta == '1' else len(hlink) - 1
 
-    def time_division_1(self, which='tmax'):
+                if len(infected_nodes) >= threshold:
+                    for node in hlink:
+                        if node in infected_nodes:  # already infected before t
+                            continue
+                        elif np.random.uniform() <= beta:
+                            if not node in new_infected_hlinks:
+                                new_infected_t.add(node)
+                                new_infected_hlinks[node] = []
+                            new_infected_hlinks[node].append(hlink)
+            for node in new_infected_hlinks:
+                hlink_diffused = sample(new_infected_hlinks[node], k=1)
+                diffusion_links.update(hlink_diffused)
+            infected_now.update(new_infected_t)
+            n_infected[t] = len(infected_now)
+            new_infected_t.clear()
+            new_infected_hlinks.clear()
+
+        return diffusion_links, n_infected
+
+    def load_backbone(self, params: dict, n_realizations = 50000):
         '''
-        the division into subnets according to the prevalence
-        :return:
+        Read the backbone from pickle file for given parameters, and do normalization by the number of realizations .
+        :param params: model parameters, including 'beta' and 'theta'.
+        :param n_realizations: number of realizations used to generate the backbone.
+        :return: backbone as a dictionary with key being hyperlink and value being the normalized weight.
         '''
-        with open(path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model_v2', 't_division.json'), 'r') as f:
-            ts = json.loads(f.read().rstrip('\n'))
-
-        if which == 'all':
-            return ts
-        elif which == 'largest':
-            return len(ts) - 1, ts[-1]
-        elif which == 'tmax':  # the earliest timestamp to reach the highest prevalence during the whole period
-            if path.exists(path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model', 'tmax.json')):
-                if not path.exists(path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model', 'beta1_1.000-beta2_1.000-theta_1.0', 'prevalence2d.txt')):
-                    prevalence = np.load(path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model', 'beta1_1.000-beta2_1.000-theta_1.0', 'prevalence1d.npy'))
-                else:
-                    prevalence = np.loadtxt(path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model', 'beta1_1.000-beta2_1.000-theta_1.0', 'prevalence2d.txt'), delimiter='\t', dtype=np.float64).mean(axis=1)
-                if max(prevalence) == self.n:
-                    ts = np.argmax(prevalence) + 1
-                else:
-                    ts = len(prevalence)
-                with open(path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model', 'tmax.json'), 'w') as f:
-                    f.write(str(ts))
-                print(np.argmax(prevalence)+1, max(prevalence), self.n)
-                return ts
-            else:
-                with open(path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model', 'tmax.json'), 'r') as f:
-                    ts = int(f.readline())
-                return ts
-        else:
-            print('which mode?')
-
-    def return_line_graph(self, subnet):
-        pass
-
-    def return_backbone(self, params: dict, model='hyper', subnet=0):
         import pickle
-        n_realizations = 5000 if self.datatype == 'phy-contact' else 100
-
-        suffix_subnet = ''
-        T = self.T
-        if isinstance(subnet, int):
-            T = self.time_division(which='all')[subnet]
-            suffix_subnet = '_0.{0}'.format(subnet + 1)
 
         beta, theta = params['beta'], params['theta']
-        if isinstance(theta, float):
-            theta = '{0:.1f}'.format(theta)
-        elif isinstance(theta, str):
-            theta = reduce(lambda x,y: x+'o'+y, theta.split('/'))
 
-        if model == 'hyper':
-            pkl_path = path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model_v2',
-                      'beta1_{0:.3f}-beta2_{1:.3f}-theta_{2}'.format(beta, beta, theta),
-                      'T{0}-backbone.pkl'.format(suffix_subnet))
-            with open(pkl_path, 'rb') as f:
-                backbone = pickle.load(f)
-            backbone = {k: v / n_realizations for k, v in backbone.items()}
-        else:
-            print('NULL')
+        pkl_path = os.path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model', 'beta_{0:.3f}-theta_{1}'.format(beta, theta), 'T_0.9-backbone.pkl')
+        if not os.path.exists(pkl_path):
+            raise FileNotFoundError('Backbone file does not exist!', 'beta_{0:.3f}-theta_{1}'.format(beta, theta))
+        
+        backbone = dict()
+        with open(pkl_path, 'rb') as f:
+            backbone = pickle.load(f)
+        backbone_normalized = {k: v / n_realizations for k, v in backbone.items()}
 
-        return backbone
+        return backbone_normalized
 
-    def shuffle_order_within_snapshot(self, seed=0, r=10) -> str:
-        path_res = path.join(PATH_TO_RESULTS, self.dataname)
-        file_path = path.join(path_res, 'hyperlinks', 'hyperTN_shuffled_IDs.json')
-        if os.path.exists(file_path):
-            return file_path
-
-        rng = np.random.default_rng(seed)
-        f = open(file_path, 'w+')
-        for hlinks in self.hypercontacts:
-            id_t = []
-            for i in range(r):
-                id_t.append(rng.choice(np.arange(len(hlinks)), size=len(hlinks), replace=False).tolist())
-            f.write(json.dumps(id_t)+'\n')
-        f.close()
-
-        return file_path
-
-    def SI_model(self, seedset: frozenset, beta, T):
+    def integrate_backbones(self, beta, theta, num_r=1000):
         '''
-        SI like process on temporal hypergraphs.
-        :param seedset: infected nodes initially
-        :param beta: infection probability per time step
-        :param T:
-        :return:
+        Integrate backbones from multiple realizations stored in pickle files, and save the re.
+        :param beta: infectivity parameter.
+        :param theta: threshold parameter.
+        :param num_r: number of realizations.
         '''
-        infected_now = set(seedset)
-        infected_t = set()
-        n_infected = np.zeros(T, dtype=np.int32)
-        diffusion_links = []
-        for t, hlinks in enumerate(self.hypercontacts):
-            if t >= T:
-                break
-            for id, hlink in enumerate(hlinks):
-                pass
+        import pickle
 
-    def threshold_model_v0(self, seedset: frozenset, params: dict, T):
-        '''
-        The threshold model on temporal hyper graphs. Adapted from ref. Social contagion models on hypergraphs. Guilherme et al. Phys. Rev. Res., 2(2):023032, 2020
-        For a hyper-contact with size 2, the directed infection occurs between the susceptible node and its infectious neighbor, beta1
-        For a hyper-contact with size > 2, the threshold process comes into effect: when the number of infectious nodes in the hyper-edge is greater than theta * N,
-        the susceptible nodes has a prob. to be infected, beta2.
-        In the deterministic case, beta1 == 1, beta2 == 1. (start point), theta == 1 or s-1, i.e., all other nodes are infected except the target node.
-        :param seedset:
-        :return: diffusion backbone and prevalence
-        '''
-        beta1, beta2, theta = [params[k] for k in ['beta1', 'beta2', 'theta']]
-        infected_now = set(seedset)
-        new_infected_t = set()
-        n_infected = np.zeros(T, dtype=np.int32)  # prevalence as a function of t.
-        diffusion_links = Counter()  # a list of links upon which the diffusion occurred.
-        # rng_shuffle = np.random.default_rng(0)  # random generator for randm shuffling of link orders.
-        for t, hlinks in enumerate(self.hypercontacts):  # at time t, go over all hlinks at the time.
-            if t >= T:
-                break
-            # for i in range(1):  # shuffle the order of hlinks
-            #     id_shuffled = rng_shuffle.choice(np.arange(len(hlinks)), size=len(hlinks), replace=False)
-            for id, hlink in enumerate(hlinks):
-                assert isinstance(hlink, frozenset)
-                # hlink = hlinks[id]
-                if len(hlink) == 2:
-                    infected_nodes = infected_now.intersection(hlink)
-                    if len(infected_nodes) == 1 and np.random.uniform() <= beta1:
-                        new_infected_t.update(hlink-infected_nodes)
-                        diffusion_links.update([hlink])
-                elif len(hlink) > 2:
-                    diffused = 0
-                    threhsold = len(hlink)-1 if theta < 0 else theta  #
-                    infected_nodes = infected_now.intersection(hlink)
-                    if len(infected_nodes) >= threhsold:
-                        for node in hlink:
-                            if node in infected_nodes:
-                                continue
-                            elif np.random.uniform() <= beta2:
-                                new_infected_t.add(node)
-                                diffused += 1
-                    if diffused > 0:  # record the hlink when at least one node got infected. The added value is the number of node infected.
-                        diffusion_links.update(Counter({hlink: diffused}))
-            infected_now.update(new_infected_t)
-            n_infected[t] = len(infected_now)
-            new_infected_t.clear()
+        res_path = os.path.join(PATH_TO_RESULTS, self.dataname, 'threshold_model', 'beta_{0:.3f}-theta_{1}'.format(beta, theta))
 
-        return diffusion_links, n_infected
+        backbone = Counter()
+        for r in range(1, num_r + 1):
+            with open(os.path.join(res_path, 'backbone-R{0}.pkl'.format(r)), 'rb') as f:
+                bb = pickle.load(f)
+                backbone.update(bb)
 
-    def threshold_model_v1(self, shuffled_r, seedset: frozenset, params: dict, T):
-        '''
-        The threshold model on temporal hyper graphs. Adapted from ref. Social contagion models on hypergraphs. Guilherme et al. Phys. Rev. Res., 2(2):023032, 2020
-        For a hyper-contact with size 2, the directed infection occurs between the susceptible node and its infectious neighbor, beta1
-        For a hyper-contact with size > 2, the threshold process comes into effect: when the number of infectious nodes in the hyper-edge is greater than theta * N,
-        the susceptible nodes has a prob. to be infected, beta2.
-        In the deterministic case, beta1 == 1, beta2 == 1. (start point), theta == 1 or s-1, i.e., all other nodes are infected except the target node.
-        :param seedset:
-        :return: diffusion backbone and prevalence
-        '''
-        shuffled_IDs_path = self.shuffle_order_within_snapshot()
-        shuffled_IDs = []
-        with open(shuffled_IDs_path, 'r') as f:
-            line = f.readline()
-            while line:
-                shuffled_IDs.append(json.loads(line.strip())[shuffled_r-1])
-                line = f.readline()
-        beta1, beta2, theta = [params[k] for k in ['beta1', 'beta2', 'theta']]
-        infected_now = set(seedset)  # infected nodes at each timestamp
-        new_infected_t = set()  # newly infected nodes in a timestamp
-        n_infected = np.zeros(T, dtype=np.int32)  # prevalence as a function of t.
-        diffusion_links = Counter()  # a list of links upon which the diffusion occurred.
-        for t, hlinks in enumerate(self.hypercontacts):  # at time t, go over all hlinks in a shuffled order.
-            if t >= T:
-                break
-            for id in range(len(hlinks)):
-                hlink = hlinks[shuffled_IDs[t][id]]  # get a hlink in a shuffled order.
-                assert isinstance(hlink, frozenset)
-                infected_nodes = infected_now.intersection(hlink)  # infected nodes at the timestamp before t
-                if len(hlink) == 2:
-                    if len(infected_nodes) == 1 and len(new_infected_t.intersection(hlink-infected_nodes)) == 0 and np.random.uniform() <= beta1:
-                        new_infected_t.update(hlink-infected_nodes)
-                        diffusion_links.update([hlink])
-                elif len(hlink) > 2:
-                    diffused = 0
-                    threshold = theta  #
-                    if np.abs(theta + 1) < 1e-3:
-                        threshold = len(hlink) - 1
-                    elif np.abs(theta - 0.5) < 1e-3:
-                        threshold = np.ceil(len(hlink)*0.5)
-                    if len(infected_nodes) >= threshold:
-                        for node in hlink:
-                            if node in infected_nodes:
-                                continue
-                            elif node not in new_infected_t and np.random.uniform() <= beta2:
-                                new_infected_t.add(node)
-                                diffused += 1
-                    if diffused > 0:  # record the hlink when at least one node got infected. The added value is the number of node infected.
-                        diffusion_links.update(Counter({hlink: diffused}))
-            infected_now.update(new_infected_t)
-            n_infected[t] = len(infected_now)
-            new_infected_t.clear()
-            # assert counter_total(diffusion_links) == n_infected[t]-len(seedset)
-
-        return diffusion_links, n_infected
-
-    def threshold_model(self, seedset: frozenset, params: dict, T):
-        '''
-        The threshold model on temporal hyper graphs. Adapted from ref. Social contagion models on hypergraphs. Guilherme et al. Phys. Rev. Res., 2(2):023032, 2020
-        For a hyper-contact with size 2, the directed infection occurs between the susceptible node and its infectious neighbor, beta1
-        For a hyper-contact with size > 2, the threshold process comes into effect: when the number of infectious nodes in the hyper-edge is greater than theta * N,
-        the susceptible nodes has a prob. to be infected, beta2.
-        In the deterministic case, beta1 == 1, beta2 == 1. (start point), theta == 1 or s-1, i.e., all other nodes are infected except the target node.
-        :param seedset:
-        :return: diffusion backbone and prevalence
-        '''
-        beta1, beta2, theta = [params[k] for k in ['beta1', 'beta2', 'theta']]
-        assert beta1 == beta2 and isinstance(theta, str)
-        beta = beta1
-        theta = float(Fraction(theta))
-
-        infected_now = set(seedset)  # infected nodes at each timestamp
-        new_infected_t = set()  # newly infected nodes in a timestamp
-        n_infected = np.zeros(T, dtype=np.int32)  # prevalence as a function of t.
-        new_infected_hlinks = dict()  # newly infected nodes (keys) and the links (values) used for infections.
-        diffusion_links = Counter()  # a list of links upon which the diffusion occurred.
-        for t, hlinks in enumerate(self.hypercontacts):  # at time t, go over all hlinks in a shuffled order.
-            if t >= T:
-                break
-            for hlink in hlinks:
-                infected_nodes = infected_now.intersection(hlink)  # infected nodes at the timestamp before t
-                threshold = theta  #
-                if theta < 1:
-                    if np.abs(theta + 1) < 1e-3:  # threshold == n - 1
-                        threshold = len(hlink) - 1
-                    else:
-                        assert theta >= 0
-                        threshold = np.ceil(len(hlink)*theta)
-                if len(infected_nodes) >= threshold:
-                    for node in hlink:
-                        if node in infected_nodes:
-                            continue
-                        elif np.random.uniform() <= beta:  # TODO normalization
-                            if node not in new_infected_hlinks:
-                                new_infected_t.add(node)
-                                new_infected_hlinks[node] = []
-                            new_infected_hlinks[node].append(hlink)
-            for node in new_infected_hlinks:
-                hlink_diffused = sample(new_infected_hlinks[node], k=1)
-                diffusion_links.update(hlink_diffused)
-            infected_now.update(new_infected_t)
-            n_infected[t] = len(infected_now)
-            new_infected_t.clear()
-            new_infected_hlinks.clear()
-
-        return diffusion_links, n_infected
-
-    def threshold_model_return_trees(self, seedset: frozenset, params: dict, T):
-        '''
-        The threshold model on temporal hyper graphs. Adapted from ref. Social contagion models on hypergraphs. Guilherme et al. Phys. Rev. Res., 2(2):023032, 2020
-        For a hyper-contact with size 2, the directed infection occurs between the susceptible node and its infectious neighbor, beta1
-        For a hyper-contact with size > 2, the threshold process comes into effect: when the number of infectious nodes in the hyper-edge is greater than theta * N,
-        the susceptible nodes has a prob. to be infected, beta2.
-        In the deterministic case, beta1 == 1, beta2 == 1. (start point), theta == 1 or s-1, i.e., all other nodes are infected except the target node.
-        :param seedset:
-        :return: diffusion backbone and prevalence
-        '''
-        beta1, beta2, theta = [params[k] for k in ['beta1', 'beta2', 'theta']]
-        assert beta1 == beta2 and isinstance(theta, str)
-        beta = beta1
-        theta = float(Fraction(theta))
-
-        infected_now = set(seedset)  # infected nodes at each timestamp
-        new_infected_t = set()  # newly infected nodes in a timestamp
-        n_infected = np.zeros(T, dtype=np.int32)  # prevalence as a function of t.
-        new_infected_hlinks = dict()  # newly infected nodes (keys) and the links (values) used for infections.
-        diffusion_links = Counter()  # a list of links upon which the diffusion occurred.
-        for t, hlinks in enumerate(self.hypercontacts):  # at time t, go over all hlinks in a shuffled order.
-            if t >= T:
-                break
-            for hlink in hlinks:
-                infected_nodes = infected_now.intersection(hlink)  # infected nodes at the timestamp before t
-                threshold = theta  #
-                if theta < 1:
-                    if np.abs(theta + 1) < 1e-3:  # threshold == n - 1
-                        threshold = len(hlink) - 1
-                    else:
-                        assert theta >= 0
-                        threshold = np.ceil(len(hlink)*theta)
-                if len(infected_nodes) >= threshold:
-                    for node in hlink:
-                        if node in infected_nodes:
-                            continue
-                        elif np.random.uniform() <= beta:  # TODO normalization
-                            if node not in new_infected_hlinks:
-                                new_infected_t.add(node)
-                                new_infected_hlinks[node] = []
-                            new_infected_hlinks[node].append(hlink)
-            for node in new_infected_hlinks:
-                hlink_diffused = sample(new_infected_hlinks[node], k=1)
-                diffusion_links.update(hlink_diffused)
-            infected_now.update(new_infected_t)
-            n_infected[t] = len(infected_now)
-            new_infected_t.clear()
-            new_infected_hlinks.clear()
-
-        return diffusion_links, n_infected
-
-    def simplicial_contagion(self, seedset, infectivity: tuple, order=2):  # TODO: simplicial contagion model, to be
-        '''
-        Simplicial contagion SI model in higher-order temporal networks. Adapted from ref. Simplicial contagion model in temporal higher-order networks.
-        :param infectivity_params: infection probabilities in different orders.
-        :param order: the highest order considered.
-        :return:
-        '''
-
-        infected_now = set(seedset)
-        infected_t = set()
-        n_infected = np.zeros(len(self.hypercontacts), dtype=np.int32)
-        hlink_id = [set() for _ in self.hypercontacts]
-        for t, hlinks in enumerate(self.hypercontacts):
-            # print(hlinks)
-            for id, hlink in enumerate(hlinks):
-                if len(hlink) == 2:
-                    infected_nodes = infected_now.intersection(hlink)
-                    if len(infected_nodes) == 1 and np.random.uniform() <= beta1:
-                        infected_t.update(hlink)
-                        hlink_id[t].add(id)
-                elif len(hlink) > 2:
-                    infected_nodes = infected_now.intersection(hlink)
-                    if len(infected_nodes) >= theta:
-                        for node in hlink:
-                            if node in infected_nodes:
-                                continue
-                            elif np.random.uniform() <= beta2:
-                                infected_t.add(node)
-                                hlink_id[t].add(id)
-                else:
-                    print('Something wrong the hlink size..')
-            infected_now.update(infected_t)
-            n_infected[t] = len(infected_now)
-            # if t < 50:
-            #     print(t, infected_now)
-            infected_t.clear()
-
-        return hlink_id, n_infected
-
-    # def foremost_paths(self, source, t_start, t_end):
-    #     t_foremost = 10 * self.T * np.ones(self.n, dtype=np.int32)  # the foremost time to reach a node
-    #     p_foremost = [[] for i in range(tnet.n)]  # The unique foremost paths that reach a target node.
-    #     t_foremost[source] = t_start - 1  # the source node is already reached.
-    #     for t, events in enumerate(self.hypercontacts):
-    #         if t >= t_end:
-    #             break
-    #         elif t < t_start:
-    #             continue
-    #         for event in events:
-    #             for node in event:
-    #             if t > t_foremost[node1]:  # if node1 has already been reached before t
-    #                 if t > t_foremost[node2]:  # node2's foremost paths already found before
-    #                     continue
-    #                 elif t == t_foremost[node2]:  # more than one path, add path
-    #                     p_foremost[node2].append((node1, node2, t))
-    #                 elif t < t_foremost[node2]:  # the foremost path is found
-    #                     t_foremost[node2] = t
-    #                     p_foremost[node2] = [(node1, node2, t)]
-    #             elif t > t_foremost[node2]:  # another direction of the contact
-    #                 if t == t_foremost[node1]:
-    #                     p_foremost[node1].append((node1, node2, t))
-    #                 else:
-    #                     t_foremost[node1] = t
-    #                     p_foremost[node1] = [(node1, node2, t)]
-    #
-    #     return return_foremost_paths(t_foremost, p_foremost)
-
-
-#TODO: the nonlinear kernel when there are multiple interactions.
-def nonlinear_model(seed: frozenset):
-    pass
-
-if __name__ == '__main__':
-    dname = 'ht09'
-    # tnet = TN(dname)
-    hyper_tnet = hyperTN(dname)
-    print(hyper_tnet.time_division()/hyper_tnet.T)
-    # hyper_tnet.shuffle_order_within_snapshot()
-    # spread_diff_seeds(hyper_tnet, {'beta1': 1.0, 'beta2': 1.0, 'theta': hyper_tnet.n})
-    # print(groupsize_statistics(hyper_tnet))
+        with open(os.path.join(res_path, 'backbone.pkl'), 'wb') as f:
+            pickle.dump(backbone, f)
